@@ -8,3 +8,5 @@ data/*.db*
 data/*.json
 .artifacts/
 .DS_Store
+apps/LocalAIApp/.build/
+dist/

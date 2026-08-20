@@ -125,14 +125,24 @@ def cmd_open() -> int:
     return 0
 
 
+def cmd_app() -> int:
+    app = PROJECT_ROOT / "dist" / "Local AI.app"
+    if not app.exists():
+        print("error: Local AI.app is not built yet\n"
+              "       run: bash scripts/build_app.sh", file=sys.stderr)
+        return 1
+    subprocess.run(["open", str(app)])
+    return 0
+
+
 def main() -> int:
     cmds = {
         "start": cmd_start, "stop": cmd_stop, "restart": cmd_restart,
         "status": cmd_status, "benchmark": cmd_benchmark,
-        "logs": cmd_logs, "open": cmd_open,
+        "logs": cmd_logs, "open": cmd_open, "app": cmd_app,
     }
     if len(sys.argv) < 2 or sys.argv[1] not in cmds:
-        print("usage: local-ai {start|stop|restart|status|benchmark|logs|open}")
+        print("usage: local-ai {start|stop|restart|status|benchmark|logs|open|app}")
         return 2
     try:
         return cmds[sys.argv[1]]()

@@ -2,14 +2,15 @@
 
 Apple Silicon 本地大模型 Runtime + Agent Gateway + Speculative Decoding 管理后台。
 
-打开 <http://127.0.0.1:8787> → 点击 Start → Agent 直接使用本地模型。不需要终端、不需要记命令、不需要手动加载 Draft。
+打开菜单栏 **Local AI.app**（或浏览器 <http://127.0.0.1:8787>）→ 点击 Start → Agent 直接使用本地模型。不需要终端、不需要记命令、不需要手动加载 Draft。
 
 ## Architecture
 
 ```
-Browser ──────────► React Dashboard (静态 SPA)
-                          │
-                          ▼
+Local AI.app (菜单栏) ─┐
+Browser ───────────────┼──► React Dashboard (静态 SPA)
+                       │          │
+                       ▼          ▼
               Control Backend  · FastAPI · 127.0.0.1:8787
               (Runtime Manager / Model Registry / Benchmark / Monitoring / launchd)
                           │ 管理（跨进程状态文件 data/runtime_state.json）
@@ -44,18 +45,45 @@ bash scripts/install.sh          # venv + 依赖 + 前端构建 + CLI + 可选 l
 
 ## Start / Stop
 
-| 操作 | Web | CLI |
-|---|---|---|
-| 启动全部 | Overview → Start | `local-ai start` |
-| 停止模型 | Overview → Stop | `local-ai stop` |
-| 重启 | Overview → Restart | `local-ai restart` |
-| 状态 | Overview | `local-ai status` |
-| 快速基准 | Benchmark 页 | `local-ai benchmark` |
-| 日志 | Logs 页 | `local-ai logs` |
-| 打开后台 | — | `local-ai open` |
+| 操作 | 菜单栏 App | Web | CLI |
+|---|---|---|---|
+| 启动全部 | Popover → Start | Overview → Start | `local-ai start` |
+| 停止模型 | Popover → Stop | Overview → Stop | `local-ai stop` |
+| 重启 | Popover → Restart | Overview → Restart | `local-ai restart` |
+| 状态 | 菜单栏状态灯 | Overview | `local-ai status` |
+| 快速基准 | Console → Benchmark | Benchmark 页 | `local-ai benchmark` |
+| 日志 | Console → Logs | Logs 页 | `local-ai logs` |
+| 打开后台 | Popover → Dashboard | — | `local-ai open` |
+| 打开 App | — | — | `local-ai app` |
 
 - Web UI：**http://127.0.0.1:8787**
 - 模型 API：**http://127.0.0.1:8080/v1** · API Key `local` · Model **`qwen3.8-27b-local`**
+
+## macOS 应用（菜单栏）
+
+原生 `Local AI.app` 是 **8787 Control API 的客户端**，不重写 Runtime。交互对齐 oMLX：菜单栏状态灯 + popover 为默认；完整管理走独立 Console 窗口（10 页与 Web 同构）。
+
+```bash
+cd ~/AI/local-ai-control-center
+bash scripts/build_app.sh          # SwiftPM release + ad-hoc codesign
+open "dist/Local AI.app"           # 或 local-ai app
+```
+
+| 项 | 值 |
+|---|---|
+| 产物 | `dist/Local AI.app`（`dist/` 不入库，每次本地构建） |
+| Bundle ID | `com.localai.controlcenter.app` |
+| 版本 | 0.2.0 |
+| 最低系统 | macOS 15+ |
+| 签名 | ad-hoc（`codesign --sign -`）；本机可直接跑 |
+| 源码 | `apps/LocalAIApp/`（Swift 6 / SwiftUI+AppKit，无完整 Xcode） |
+| 构建注意 | 必须 `--package-path apps/LocalAIApp --scratch-path apps/LocalAIApp/.build`；仅 Command Line Tools 时不要用 `@State`/`@AppStorage`（缺 SwiftUIMacros） |
+
+菜单栏为 `LSUIElement` 配件应用（无 Dock 图标）；打开 Console 时临时切到 `.regular`。状态灯**不用 template image**（会洗掉颜色）。Popover：Start/Stop/Restart、Safe⇄Fast、Copy API Config、Dashboard、Console。控制面 8787 宕机时可从 popover 拉起（`launchctl kickstart`，失败则 uvicorn）。
+
+通知：Runtime 就绪、回退 Safe、内存告警、接受率过低。Settings 可装/卸 launchd，以及 SMAppService 登录启动 App 本身。
+
+首次若被 Gatekeeper 拦：右键 → 打开。Developer ID 公证不在本版范围。
 
 ## DFlash（Fast Mode）
 
@@ -145,14 +173,18 @@ cd frontend && npx vitest run            # 前端
 | 页面数字全是 `—` | Safe 模式下 mlx-lm 不提供 /metrics，属如实展示；Fast 模式才有细粒度指标 |
 | 改了设置不生效 | 看顶部 Restart required 横幅，点 Restart now |
 | 内存告警 | 降 max context / 停其他大模型应用；Swap 阈值可在 Settings → Advanced 调 |
+| 菜单栏没有 Local AI | `bash scripts/build_app.sh` 后 `local-ai app`；配件应用不在 Dock，看状态栏右侧 |
+| `swift build` 找不到宏 / 编到错误目录 | 用 `scripts/build_app.sh`，不要在 `apps/` 目录裸跑 `swift build` |
 
 ## Update / Uninstall
 
 ```bash
 # Update
 cd ~/AI/local-ai-control-center && git pull && bash scripts/install.sh
+# 需要新版菜单栏 App 时再跑：bash scripts/build_app.sh
 
 # Uninstall（不影响 LM Studio / Ollama / 模型文件）
+# 若开过「登录时启动 Local AI.app」：先在 App Settings 关掉 Launch at Login，再退出 App
 launchctl bootout gui/$(id -u)/com.localai.controlcenter.backend
 launchctl bootout gui/$(id -u)/com.localai.controlcenter.gateway
 rm -f ~/Library/LaunchAgents/com.localai.controlcenter.{backend,gateway}.plist

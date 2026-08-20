@@ -57,5 +57,7 @@ fi
 
 echo
 echo "Done. Next:"
-echo "  local-ai start        # start everything"
-echo "  open http://127.0.0.1:8787"
+echo "  local-ai start                 # start everything"
+echo "  open http://127.0.0.1:8787     # web dashboard"
+echo "  bash scripts/build_app.sh      # native menu bar app (ad-hoc signed)"
+echo "  local-ai app                   # open Local AI.app after building"

@@ -76,7 +76,8 @@ async def measure_generation(prompt: str, max_tokens: int) -> dict[str, Any]:
                         continue
                     for choice in obj.get("choices") or []:
                         delta = choice.get("delta") or {}
-                        if delta.get("content") or delta.get("tool_calls") or delta.get("reasoning_content"):
+                        if (delta.get("content") or delta.get("tool_calls")
+                                or delta.get("reasoning_content") or delta.get("reasoning")):
                             if ttft is None:
                                 ttft = time.perf_counter() - t_start
                             chunk_tokens += 1

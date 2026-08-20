@@ -79,6 +79,8 @@ class MLXRuntimeProvider(RuntimeProvider):
                 cmd += ["--draft-quant", dq]
             if not df.get("prefix_cache", True):
                 cmd += ["--no-prefix-cache"]
+            if not rt.get("enable_thinking", True):
+                cmd += ["--chat-template-args", '{"enable_thinking": false}']
         elif mode == "safe":
             cmd = [
                 _venv_bin("python"), "-m", "mlx_lm", "server",

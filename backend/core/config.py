@@ -44,6 +44,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "draft_model": "jfan/Qwen3.8-27B-heretic-dflash",
         "max_context": 65536,
         "default_max_tokens": 4096,
+        "enable_thinking": True,  # Qwen3.8 tokenizer default; set False to save tokens
     },
     "dflash": {
         "enabled": True,

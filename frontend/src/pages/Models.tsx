@@ -39,6 +39,13 @@ export default function Models() {
     if (pull?.job?.status === "cancelled") setNote(t("models.pull.cancelled"));
   }, [pull?.job?.status, pull?.job?.finished_at, refresh, t]);
 
+  useEffect(() => {
+    if ((pull?.reconciled_models?.length ?? 0) > 0) {
+      setNote(t("models.dl.reconciled"));
+      void refresh();
+    }
+  }, [pull?.reconciled_models, refresh, t]);
+
   const setPane = (next: Pane) => {
     const p = new URLSearchParams(params);
     if (next === "installed") p.delete("tab");
@@ -107,8 +114,8 @@ export default function Models() {
           </button>
           <button type="button" className={pane === "downloads" ? "active" : ""} onClick={() => setPane("downloads")}>
             {t("models.tab.downloads")}
-            {(pull?.items ?? []).filter((i) => ["running", "queued", "paused", "error"].includes(i.status)).length > 0 && (
-              <span> ({(pull?.items ?? []).filter((i) => ["running", "queued", "paused", "error"].includes(i.status)).length})</span>
+            {(pull?.items ?? []).filter((i) => ["running", "pausing", "queued", "paused", "error"].includes(i.status)).length > 0 && (
+              <span> ({(pull?.items ?? []).filter((i) => ["running", "pausing", "queued", "paused", "error"].includes(i.status)).length})</span>
             )}
           </button>
         </div>
@@ -169,6 +176,7 @@ export default function Models() {
             });
           }}
           onDismiss={(id) => { void api.post("/models/pull/dismiss", { repo_id: id }).then(() => refreshPull()); }}
+          onViewInstalled={() => { setPane("installed"); void refresh(); }}
           onClearPartials={(id) => {
             if (!window.confirm(t("models.dl.clear.confirm", { id }))) return;
             void api.post("/models/pull/clear-partials", { repo_id: id }).then(() => {
@@ -281,23 +289,27 @@ function InstalledTable({ models, loading, busy, copied, t, onScan, onRole, onFo
   );
 }
 
-function DownloadsTable({ items, t, onPause, onResume, onDismiss, onClearPartials }: {
+function DownloadsTable({ items, t, onPause, onResume, onDismiss, onClearPartials, onViewInstalled }: {
   items: {
     repo_id: string; status: string; bytes_done?: number; bytes_total?: number;
     error?: string | null; has_partial_files?: boolean; has_complete_model?: boolean;
+    completion_source?: "disk" | null;
   }[];
   t: (k: MsgKey, vars?: Record<string, string | number>) => string;
   onPause: (id: string) => void;
   onResume: (id: string) => void;
   onDismiss: (id: string) => void;
   onClearPartials: (id: string) => void;
+  onViewInstalled: () => void;
 }) {
-  const statusKey = (s: string): MsgKey => {
+  const statusKey = (s: string, completionSource?: string | null): MsgKey => {
     if (s === "running" || s === "pausing") return "models.dl.status.running";
     if (s === "queued") return "models.dl.status.queued";
     if (s === "paused") return "models.dl.status.paused";
     if (s === "error") return "models.dl.status.error";
-    if (s === "done") return "models.dl.status.done";
+    if (s === "done") return completionSource === "disk"
+      ? "models.dl.status.installed_external"
+      : "models.dl.status.done";
     return "models.dl.status.paused";
   };
   return (
@@ -313,7 +325,7 @@ function DownloadsTable({ items, t, onPause, onResume, onDismiss, onClearPartial
             <div key={item.repo_id} className="kv" style={{ alignItems: "flex-start" }}>
               <span className="k">
                 <span className="mono">{item.repo_id}</span>
-                <small>{t(statusKey(item.status))}
+                <small>{t(statusKey(item.status, item.completion_source))}
                   {total > 0 ? ` · ${fmtBytes(done)} / ${fmtBytes(total)}` : ""}
                 </small>
                 {item.status === "error" && item.error && <small>{item.error}</small>}
@@ -332,6 +344,9 @@ function DownloadsTable({ items, t, onPause, onResume, onDismiss, onClearPartial
                 )}
                 {!["running", "pausing"].includes(item.status) && (
                   <button className="btn small" onClick={() => onDismiss(item.repo_id)}>{t("models.dl.dismiss")}</button>
+                )}
+                {item.status === "done" && item.completion_source === "disk" && (
+                  <button className="btn small" onClick={onViewInstalled}>{t("models.dl.view_installed")}</button>
                 )}
                 {item.has_partial_files && !item.has_complete_model && (
                   <button className="btn small" onClick={() => onClearPartials(item.repo_id)}>

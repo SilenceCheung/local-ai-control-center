@@ -344,14 +344,44 @@ def discover_incomplete_repos(cfg: dict[str, Any] | None = None) -> list[str]:
 
 
 def is_complete_library_model(repo_id: str, cfg: dict[str, Any] | None = None) -> bool:
-    """Use current disk contents, not the registry DB or download ledger."""
+    """Use current disk contents, not the registry DB or download ledger.
+
+    Sharded models are complete only when every file referenced by the
+    safetensors index exists. This prevents a downloader's temporary gap
+    between shards from being mistaken for a finished model.
+    """
     dest = library_model_path(repo_id, cfg).expanduser().resolve()
-    return (
-        dest.is_dir()
-        and not _is_incomplete(dest)
-        and (dest / "config.json").is_file()
-        and any(dest.glob("*.safetensors"))
-    )
+    if not dest.is_dir() or _is_incomplete(dest) or not (dest / "config.json").is_file():
+        return False
+
+    index = dest / "model.safetensors.index.json"
+    if index.is_file():
+        try:
+            payload = json.loads(index.read_text(encoding="utf-8"))
+            shards = {
+                str(name) for name in (payload.get("weight_map") or {}).values()
+                if isinstance(name, str) and name
+            }
+        except (OSError, json.JSONDecodeError, AttributeError):
+            return False
+        if not shards:
+            return False
+        shard_paths = [Path(shard) for shard in shards]
+        if any(path.is_absolute() or ".." in path.parts for path in shard_paths):
+            return False
+        try:
+            return all(
+                (dest / shard).is_file() and (dest / shard).stat().st_size > 0
+                for shard in shard_paths
+            )
+        except OSError:
+            return False
+
+    weights = list(dest.glob("*.safetensors"))
+    try:
+        return bool(weights) and all(path.stat().st_size > 0 for path in weights)
+    except OSError:
+        return False
 
 
 def delete_library_folder(repo_id: str, cfg: dict[str, Any] | None = None) -> str:

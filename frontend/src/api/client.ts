@@ -91,6 +91,8 @@ export interface DownloadItem {
   current?: string;
   detail?: string;
   error?: string | null;
+  source?: "app" | "legacy" | "discovered";
+  completion_source?: "disk" | null;
   added_at?: number;
   updated_at?: number;
   has_partial_files?: boolean;
@@ -104,6 +106,7 @@ export interface PullJob {
   active_id?: string | null;
   queue?: string[];
   items?: DownloadItem[];
+  reconciled_models?: string[];
   job: {
     kind: string;
     status: string;

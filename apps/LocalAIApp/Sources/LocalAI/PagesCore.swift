@@ -211,6 +211,12 @@ private struct DownloadRow: View {
                 if item.status != "running" && item.status != "pausing" {
                     Button(L10n.t("models.dl.dismiss")) { store.dismissDownload(repoId: item.repoId) }
                 }
+                if item.status == "done" && item.completionSource == "disk" {
+                    Button(L10n.t("models.dl.view_installed")) {
+                        store.modelsPane = "installed"
+                        Task { await store.loadModels() }
+                    }
+                }
                 if item.hasPartialFiles == true && item.hasCompleteModel != true {
                     Button(L10n.t("models.dl.clear_partials"), role: .destructive) {
                         store.clearDownloadPartials(repoId: item.repoId)
@@ -231,7 +237,10 @@ private struct DownloadRow: View {
         case "queued": return L10n.t("models.dl.status.queued")
         case "paused": return L10n.t("models.dl.status.paused")
         case "error": return L10n.t("models.dl.status.error")
-        case "done": return L10n.t("models.dl.status.done")
+        case "done":
+            return item.completionSource == "disk"
+                ? L10n.t("models.dl.status.installed_external")
+                : L10n.t("models.dl.status.done")
         default: return item.status ?? L10n.t("emdash")
         }
     }

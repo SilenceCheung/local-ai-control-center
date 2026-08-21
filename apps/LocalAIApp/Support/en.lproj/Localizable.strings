@@ -143,7 +143,7 @@
 "models.tab.installed" = "Installed";
 "models.tab.discover" = "Discover";
 "models.tab.downloads" = "Downloads";
-"models.dl.kicker" = "One download runs at a time. Removing an item clears only its task record and never deletes local model files.";
+"models.dl.kicker" = "Only downloads started here appear in this list. Models completed by another app are recognized by a library rescan and never remain as paused tasks.";
 "models.dl.pause" = "Pause";
 "models.dl.dismiss" = "Remove from list";
 "models.dl.clear_partials" = "Clear partial download";
@@ -158,6 +158,8 @@
 "models.dl.status.paused" = "Paused";
 "models.dl.status.error" = "Failed";
 "models.dl.status.done" = "Done";
+"models.dl.status.installed_external" = "Installed on disk";
+"models.dl.view_installed" = "View Installed";
 "models.hub.search" = "Search Hugging Face";
 "models.hub.sort" = "Sort";
 "models.hub.sort.downloads" = "Downloads";

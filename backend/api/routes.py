@@ -190,7 +190,10 @@ async def models_pull(body: PullBody) -> dict[str, Any]:
 
 @router.get("/models/pull")
 async def models_pull_status() -> dict[str, Any]:
-    return pull_mod.pull_manager.snapshot()
+    out = pull_mod.pull_manager.snapshot()
+    if out.get("reconciled_models"):
+        await asyncio.to_thread(registry.scan_models)
+    return out
 
 
 @router.post("/models/pull/cancel")

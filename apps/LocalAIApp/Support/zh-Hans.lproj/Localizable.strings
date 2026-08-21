@@ -136,7 +136,7 @@
 "models.tab.installed" = "已安装";
 "models.tab.discover" = "发现";
 "models.tab.downloads" = "下载";
-"models.dl.kicker" = "同时只跑一个下载。从列表移除只清理任务记录，不会删除本地模型文件。";
+"models.dl.kicker" = "这里只显示由本 App 发起的下载。其他软件完成的模型通过模型库重新扫描识别，不会继续显示为暂停任务。";
 "models.dl.pause" = "暂停";
 "models.dl.dismiss" = "从列表移除";
 "models.dl.clear_partials" = "清理下载残片";
@@ -151,6 +151,8 @@
 "models.dl.status.paused" = "已暂停";
 "models.dl.status.error" = "失败";
 "models.dl.status.done" = "完成";
+"models.dl.status.installed_external" = "磁盘中已安装";
+"models.dl.view_installed" = "查看已安装";
 "models.hub.search" = "搜索 Hugging Face";
 "models.hub.sort" = "排序";
 "models.hub.sort.downloads" = "下载量";

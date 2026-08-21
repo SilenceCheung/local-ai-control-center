@@ -212,6 +212,8 @@ struct DownloadItem: Codable, Identifiable, Hashable {
     var current: String?
     var detail: String?
     var error: String?
+    var source: String?
+    var completionSource: String?
     var addedAt: Double?
     var updatedAt: Double?
     var hasPartialFiles: Bool?
@@ -227,6 +229,7 @@ struct PullJobEnvelope: Codable {
     var items: [DownloadItem]?
     var activeId: String?
     var queue: [String]?
+    var reconciledModels: [String]?
 
     struct Job: Codable {
         var kind: String?

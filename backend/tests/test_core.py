@@ -692,6 +692,111 @@ def test_complete_library_model_rejects_partial_folder(tmp_path, monkeypatch):
     assert reg.is_complete_library_model("org/model") is False
 
 
+def test_complete_library_model_requires_every_indexed_shard(tmp_path, monkeypatch):
+    from backend.models import registry as reg
+
+    dest = tmp_path / "org" / "model"
+    dest.mkdir(parents=True)
+    (dest / "config.json").write_text("{}")
+    (dest / "model.safetensors.index.json").write_text(json.dumps({
+        "weight_map": {
+            "layer.0": "model-00001-of-00002.safetensors",
+            "layer.1": "model-00002-of-00002.safetensors",
+        },
+    }))
+    (dest / "model-00001-of-00002.safetensors").write_bytes(b"one")
+    monkeypatch.setattr(reg, "library_model_path", lambda repo_id, cfg=None: dest)
+
+    assert reg.is_complete_library_model("org/model") is False
+    (dest / "model-00002-of-00002.safetensors").write_bytes(b"two")
+    assert reg.is_complete_library_model("org/model") is True
+
+    (dest / "model.safetensors.index.json").write_text(json.dumps({
+        "weight_map": {"layer.0": "../../outside.safetensors"},
+    }))
+    assert reg.is_complete_library_model("org/model") is False
+
+
+def test_pull_manager_retires_completed_legacy_download_record(tmp_path, monkeypatch):
+    from backend.core import config as cfg_mod
+    from backend.models import pull as pull_mod
+
+    downloads = tmp_path / "downloads.json"
+    downloads.write_text(json.dumps({
+        "items": [{"repo_id": "org/model", "status": "paused"}],
+        "queue": [],
+    }))
+    monkeypatch.setattr(cfg_mod, "DOWNLOADS_PATH", downloads)
+    monkeypatch.setattr(pull_mod, "library_model_path", lambda rid, cfg=None: tmp_path / "org" / "model")
+    monkeypatch.setattr(pull_mod, "library_status", lambda cfg=None: {"library": str(tmp_path)})
+    monkeypatch.setattr(pull_mod, "is_complete_library_model", lambda rid: True)
+
+    manager = pull_mod.PullJobManager()
+    out = manager.snapshot()
+
+    assert out["items"] == []
+    assert out["reconciled_models"] == ["org/model"]
+    persisted = json.loads(downloads.read_text())
+    assert persisted["items"] == []
+
+
+def test_pull_manager_marks_app_download_completed_by_another_app(tmp_path, monkeypatch):
+    from backend.core import config as cfg_mod
+    from backend.models import pull as pull_mod
+
+    downloads = tmp_path / "downloads.json"
+    monkeypatch.setattr(cfg_mod, "DOWNLOADS_PATH", downloads)
+    dest = tmp_path / "org" / "model"
+    monkeypatch.setattr(pull_mod, "library_model_path", lambda rid, cfg=None: dest)
+    monkeypatch.setattr(pull_mod, "library_status", lambda cfg=None: {"library": str(tmp_path)})
+    monkeypatch.setattr(pull_mod, "is_complete_library_model", lambda rid: True)
+    manager = pull_mod.PullJobManager()
+    manager.items = {"org/model": manager._blank_item("org/model", None, dest)}
+    manager.items["org/model"]["status"] = "paused"
+
+    out = manager.snapshot()
+
+    assert out["reconciled_models"] == ["org/model"]
+    assert out["items"][0]["status"] == "done"
+    assert out["items"][0]["completion_source"] == "disk"
+
+
+def test_pull_manager_does_not_claim_external_partial_download(tmp_path, monkeypatch):
+    from backend.core import config as cfg_mod
+    from backend.models import pull as pull_mod
+
+    monkeypatch.setattr(cfg_mod, "DOWNLOADS_PATH", tmp_path / "downloads.json")
+    monkeypatch.setattr(pull_mod, "library_status", lambda cfg=None: {"library": str(tmp_path)})
+    external = tmp_path / "external" / "model"
+    external.mkdir(parents=True)
+    (external / "weights.safetensors.part").write_bytes(b"partial")
+    manager = pull_mod.PullJobManager()
+
+    assert manager.snapshot()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_pull_status_rescans_registry_after_reconciliation(monkeypatch):
+    from backend.api import routes
+
+    monkeypatch.setattr(
+        routes.pull_mod.pull_manager,
+        "snapshot",
+        lambda: {"items": [], "reconciled_models": ["org/model"]},
+    )
+    calls = {"count": 0}
+
+    def scan():
+        calls["count"] += 1
+        return []
+
+    monkeypatch.setattr(routes.registry, "scan_models", scan)
+    out = await routes.models_pull_status()
+
+    assert out["reconciled_models"] == ["org/model"]
+    assert calls["count"] == 1
+
+
 def test_clear_download_partials_preserves_completed_model_files(tmp_path, monkeypatch):
     import asyncio
     from backend.core import config as cfg_mod

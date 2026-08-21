@@ -20,6 +20,7 @@ from tqdm.auto import tqdm
 from backend.models.registry import (
     _INCOMPLETE_MARKER,
     _is_incomplete,
+    is_complete_library_model,
     library_model_path,
     library_status,
     parse_repo_id,
@@ -148,7 +149,7 @@ class PullJobManager:
         return self._task is not None and not self._task.done()
 
     def snapshot(self) -> dict[str, Any]:
-        self._hydrate_disk()
+        reconciled_models = self._hydrate_disk()
         if self.busy and self.job and self._active_id:
             with self._lock:
                 live = self.items.get(self._active_id)
@@ -171,6 +172,7 @@ class PullJobManager:
             "items": items,
             "queue": list(self._queue),
             "library": library_status(),
+            "reconciled_models": reconciled_models,
         }
 
     @staticmethod
@@ -193,11 +195,7 @@ class PullJobManager:
                 except OSError:
                     pass
         has_partials = partial_bytes > 0 or (dest / _INCOMPLETE_MARKER).exists()
-        has_complete_model = (
-            not has_partials
-            and (dest / "config.json").is_file()
-            and any(dest.glob("*.safetensors"))
-        )
+        has_complete_model = is_complete_library_model(repo_id)
         row.update(
             has_partial_files=has_partials,
             has_complete_model=has_complete_model,
@@ -329,6 +327,8 @@ class PullJobManager:
             "current": "",
             "detail": "",
             "error": None,
+            "source": "app",
+            "completion_source": None,
             "added_at": now,
             "updated_at": now,
         }
@@ -344,6 +344,7 @@ class PullJobManager:
         if item.get("status") == "done":
             item["status"] = "queued"
             item["error"] = None
+            item["completion_source"] = None
         item["updated_at"] = time.time()
         return item
 
@@ -487,6 +488,8 @@ class PullJobManager:
             self.items = {}
             self._queue = []
         for row in self.items.values():
+            row.setdefault("source", "legacy")
+            row.setdefault("completion_source", None)
             if row.get("status") in {"running", "pausing"}:
                 row["status"] = "paused"
 
@@ -502,23 +505,48 @@ class PullJobManager:
         tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         os.replace(tmp, DOWNLOADS_PATH)
 
-    def _hydrate_disk(self) -> None:
-        from backend.models.registry import discover_incomplete_repos
+    def _hydrate_disk(self) -> list[str]:
+        """Reconcile owned task records with disk without claiming external work.
+
+        Older builds synthesized a paused task for every external ``.part``
+        folder. Those legacy rows are retired once the model is complete.
+        New external partial folders remain model-library facts and are never
+        presented as downloads controlled by this App.
+        """
         changed = False
-        for rid in discover_incomplete_repos():
-            if rid in self.items:
-                if self.items[rid].get("status") == "running" and not (
-                    self.busy and self._active_id == rid
-                ):
-                    self.items[rid]["status"] = "paused"
+        reconciled: list[str] = []
+        with self._lock:
+            for rid, item in list(self.items.items()):
+                if self.busy and self._active_id == rid:
+                    continue
+                facts = self._with_disk_facts(item)
+                if facts.get("has_complete_model") is True:
+                    if rid in self._queue:
+                        self._queue.remove(rid)
+                    source = item.get("source") or "legacy"
+                    if source in {"legacy", "discovered"}:
+                        self.items.pop(rid, None)
+                        reconciled.append(rid)
+                        changed = True
+                    elif item.get("status") != "done":
+                        item.update(
+                            status="done",
+                            current="reconciled",
+                            error=None,
+                            completion_source="disk",
+                            updated_at=time.time(),
+                        )
+                        reconciled.append(rid)
+                        changed = True
+                    continue
+                if item.get("source") == "discovered" and facts.get("has_partial_files") is not True:
+                    self.items.pop(rid, None)
+                    if rid in self._queue:
+                        self._queue.remove(rid)
                     changed = True
-                continue
-            dest = library_model_path(rid)
-            self.items[rid] = self._blank_item(rid, None, dest)
-            self.items[rid]["status"] = "paused"
-            changed = True
-        if changed:
-            self._save()
+            if changed:
+                self._save()
+        return reconciled
 
     async def pause_wait(self, repo_id: str | None = None, timeout: float = 12) -> bool:
         target = repo_id or self._active_id

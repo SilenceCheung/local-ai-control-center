@@ -346,7 +346,8 @@ final class AppStore: ObservableObject {
     func pollPullJob() async {
         let wasBusy = pullJob?.busy == true
         pullJob = try? await client.get("/api/models/pull")
-        if wasBusy && pullJob?.busy == false {
+        let reconciled = !(pullJob?.reconciledModels?.isEmpty ?? true)
+        if (wasBusy && pullJob?.busy == false) || reconciled {
             await loadModels()
         }
     }

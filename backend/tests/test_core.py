@@ -229,6 +229,7 @@ def test_recipe_activation_does_not_pollute_source_slot_with_destination_models(
     from backend.runtime import recipes as rec
 
     monkeypatch.setattr(cfg_mod, "CONFIG_PATH", tmp_path / "config.yaml")
+    monkeypatch.setattr(rec, "resolve_path", lambda mid: f"/models/{mid}")
     cfg = cfg_mod.load_config()
     cfg["recipes"] = rec.default_recipes_section()
     cfg["runtime"]["target_model"] = rec.DEFAULT_SLOTS[rec.OFFICIAL_DFLASH2]["target_model"]
@@ -254,6 +255,7 @@ def test_official_recipe_does_not_pass_unknown_block_size(tmp_path, monkeypatch)
     monkeypatch.setattr(rec, "_SERVE_FLAGS", frozenset({
         "--model", "--draft-model", "--verify-mode", "--draft-quant",
     }))
+    monkeypatch.setattr(rec, "resolve_path", lambda mid: f"/models/{mid}")
     monkeypatch.setattr(prov_mod, "serve_supports", lambda flag: flag in rec._SERVE_FLAGS)
     monkeypatch.setattr(prov_mod, "resolve_path", lambda mid: f"/models/{mid}")
     rec.activate("official_dflash2")

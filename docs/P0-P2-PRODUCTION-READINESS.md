@@ -28,15 +28,23 @@
 
 | 项 | 状态 | 说明 |
 |---|---|---|
-| 下载误删止血 | 代码完成、自动测试通过 | 下载页无整目录删除；残片清理保留完成文件；完整删除需 scope + 精确模型名 |
+| 下载误删与状态误判止血 | 代码完成、实机通过 | 下载页无整目录删除；外部 `.part` 不再被认领；legacy 完成态自动对账；完整删除需 scope + 精确模型名 |
 | 请求预算 / tool thinking | 代码完成、自动测试通过 | 32000 类请求在 production 实际为 4096；tool thinking=false |
 | 去重 / 有界排队 | 代码完成、自动测试通过 | 两个相同并发仅一个进引擎；另一个 409；不同请求仍串行 |
 | Claude reasoning / usage / stop reason | 代码完成、自动测试通过 | thinking block、非零输入估算、引擎输出 usage、`max_tokens` stop |
 | App 活动请求观测与取消 | 代码完成、Swift build 通过 | 每 2 秒刷新；显示 Agent、输入、工具、预算、elapsed、cache |
 | 硬取消 Metal generation | 待真机门禁 | 当前通过关闭 upstream best effort；上游无公开 interrupt API |
-| 27B Agent soak | 阻塞于 Target 重下载 | 下载完成后执行以下矩阵，不得沿用删除前的结果当新版本证据 |
+| 27B Agent soak | 已解阻，但当前未通过 | Target 已恢复；本次实时回归有 3 个工具循环请求返回 429 `local_queue_full`，尚未完成 20 回合/2 小时门禁 |
 
-## 4. 下载完成后的强制验收矩阵
+### 当前恢复证据（2026-08-21，提交 `011cd8d`）
+
+- Target：`lmstudio-community/Qwen3.8-27B-MLX-4bit`，3 个权重分片，共 `16,081,498,220` bytes，registry 为 `available / mlx / target`。
+- Draft：`z-lab/Qwen3.8-27B-DFlash2`；`official_dflash2` 运行快照确认 `w4:gs64`，Target/Draft 均 loaded。
+- 下载账本：`items=[]`，模型文件未被清理或移动。
+- 门禁：非实时 Python 80 passed；前端 production build、原生 release build/codesign、GitHub CI 通过。
+- 负面证据：本机完整 pytest 在 Runtime 在线时进入 live Agent 用例，3 个请求等待超过 60 秒后返回 429；测试中止后 scheduler 回到 `active=0 / waiting=0`。因此不能把“模型已恢复”写成“生产验收已通过”。
+
+## 4. Target 恢复后的强制验收矩阵
 
 1. 配方启动证据：Target、Draft、`w4:gs64`、`mode_used=dflash`、接受率均来自本次进程和本次请求。
 2. 冷/热 20K：同一固定前缀各跑一次；记录 TTFT、physical/restored prefill、cache status、decode tok/s。热请求必须命中恢复，不能只看总 tok/s。
@@ -49,4 +57,4 @@
 
 ## 5. 发布判定
 
-只有以上 1–8 全部形成同一 build、同一 runtime commit、同一模型文件的证据，才标记“生产力级通过”。当前结论是：P0–P2 代码与非 27B 门禁通过；真机硬取消和新版 Agent soak 待 Target 下载完成，尚不能宣称最终生产验收完成。
+只有以上 1–8 全部形成同一 build、同一 runtime commit、同一模型文件的证据，才标记“生产力级通过”。当前结论是：Target/Draft 与配方已恢复，下载状态修复和非实时门禁通过；实时 Agent 队列仍出现 429，硬取消、连续 20 回合与两小时 soak 均未签字，尚不能宣称最终生产验收完成。

@@ -2,7 +2,7 @@
 
 审计时间：2026-08-20 10:25 (UTC+8) · 审计人：Agent（只读审计，未修改任何现有配置）
 
-> 2026-08-21 更新：项目 venv 已从 PyPI 0.1.8 升级到固定上游 commit `60803233af4589e18588b9bacbb03880801c828a`（包版本显示 0.1.10）。PyPI 当前没有 0.1.10 可安装包；以 `scripts/install.sh` 与 `docs/HANDOVER-CODEX.md` 为当前事实。官方 Qwen3.8 Target/DFlash2 正在下载，真机数据尚未写入本审计。
+> 2026-08-21 更新：项目 venv 已从 PyPI 0.1.8 升级到固定上游 commit `60803233af4589e18588b9bacbb03880801c828a`（包版本显示 0.1.10）。PyPI 当前没有 0.1.10 可安装包；以 `scripts/install.sh` 与 `docs/HANDOVER-CODEX.md` 为当前事实。官方 Qwen3.8 Target/DFlash2 已完整安装并以 `official_dflash2` 真机加载；生产 Agent soak 的最新判定见 `docs/P0-P2-PRODUCTION-READINESS.md`。
 
 ## 1. 硬件与系统
 
@@ -49,6 +49,14 @@
 | 11434 | Ollama | 不动 |
 
 ## 5. 模型资产
+
+### 当前活动官方配方（2026-08-21）
+
+- Target：`lmstudio-community/Qwen3.8-27B-MLX-4bit`，MLX 4-bit，3 个 safetensors 分片，共 `16,081,498,220` bytes，registry 状态 `available`，角色 `target`。
+- Draft：`z-lab/Qwen3.8-27B-DFlash2`，运行量化 `w4:gs64`，与 Target 一同在 `official_dflash2` 配方加载。
+- 下载账本：已与磁盘完成态对账，`items=[]`；外部下载任务不会再伪装成本 App 的暂停任务。
+
+以下 Heretic 资产小节保留为 **2026-08-20 初始审计基线**，不是当前活动配方：
 
 ### Target：`McG-221/Qwen3.8-27B-heretic-ara-mlx-8Bit`
 

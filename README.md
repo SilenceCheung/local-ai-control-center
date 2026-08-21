@@ -32,7 +32,7 @@ DFlash2 不是替换 Qwen3.8 的另一个聊天模型。Draft 会并行提出一
 | 18,053-token 首次前缀 | 32.36 s prefill | 从未出现过的 20K 级前缀仍然昂贵，DFlash 不会消除冷 prefill |
 | 相同前缀热请求 | 0.198–0.205 s prefill | 恢复约 18K token 后，稳定 system prompt / tool schema 的收益非常明显 |
 
-这些数字是 2026-08-21 P0–P2 加固前的真实能力快照，用于说明性能边界，**不是发布 SLO**。当前 Target 重新下载完成后，应按 [`docs/P0-P2-PRODUCTION-READINESS.md`](docs/P0-P2-PRODUCTION-READINESS.md) 重新跑冷/热前缀、工具循环、取消、并发和两小时 soak；完整历史证据见 [`docs/PRODUCTION-AGENT-VALIDATION.md`](docs/PRODUCTION-AGENT-VALIDATION.md)。
+这些数字是 2026-08-21 P0–P2 加固前的真实能力快照，用于说明性能边界，**不是发布 SLO**。当前 Target 已恢复完整，但新版实时 Agent 回归仍出现 `429 local_queue_full`；必须继续按 [`docs/P0-P2-PRODUCTION-READINESS.md`](docs/P0-P2-PRODUCTION-READINESS.md) 完成冷/热前缀、工具循环、取消、并发和两小时 soak，不能仅凭模型已加载宣称生产验收通过。完整历史证据见 [`docs/PRODUCTION-AGENT-VALIDATION.md`](docs/PRODUCTION-AGENT-VALIDATION.md)。
 
 ## Architecture
 
@@ -63,7 +63,7 @@ Agents ───────► Inference Gateway · FastAPI · 127.0.0.1:8080/v
 | Draft | `z-lab/Qwen3.8-27B-DFlash2` | 官方配套 DFlash2 · `w4:gs64` · checkpoint block size 8 |
 | 可选配方 | `McG-221/...8Bit` + `jfan/...heretic-dflash` | Heretic 8-bit Target + DFlash 1 Draft，适合独立 A/B，不代表官方配方性能 |
 
-模型从 **LM Studio 库目录**（默认 `~/.lmstudio/models/{org}/{name}`）原地引用，不移动、不改名。额外扫描 `~/.cache/huggingface/hub`，但**新下载不会写到 HF 缓存**。换库目录必须在 Models / Settings 里手动选取。Models 页「发现」可搜 Hugging Face，仅 MLX 可下载；「下载」页是队列（同时只跑一个，可暂停续传）。从下载列表移除只删任务记录；清理残片只删 `.part`；整目录删除只在「已安装」页并需二次确认。架构不锁定这两个模型：已安装列表可将任何 MLX 兼容模型设为 Target。
+模型从 **LM Studio 库目录**（默认 `~/.lmstudio/models/{org}/{name}`）原地引用，不移动、不改名。额外扫描 `~/.cache/huggingface/hub`，但**新下载不会写到 HF 缓存**。换库目录必须在 Models / Settings 里手动选取。Models 页「发现」可搜 Hugging Face，仅 MLX 可下载；「下载」页只管理本 App 发起的任务（同时只跑一个，可暂停续传），不会把其他软件留下的 `.part` 冒充为本 App 的“已暂停”。外部软件完成的模型通过模型库 Rescan 识别；旧账本会自动与磁盘完成态对账。从下载列表移除只删任务记录；清理残片只删 `.part`；整目录删除只在「已安装」页并需二次确认。架构不锁定这两个模型：已安装列表可将任何 MLX 兼容模型设为 Target。
 
 ## Install
 

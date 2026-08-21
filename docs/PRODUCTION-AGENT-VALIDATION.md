@@ -1,6 +1,6 @@
 # Production Agent Gateway Validation
 
-> Historical baseline from before the 2026-08-21 P0–P2 hardening. The Target was subsequently deleted and is being re-downloaded. Do not use the results below as acceptance evidence for the new gateway build; the mandatory revalidation matrix is in `docs/P0-P2-PRODUCTION-READINESS.md`.
+> Historical baseline from before the 2026-08-21 P0–P2 hardening. The Target has since been restored, but the results below remain historical and must not be used as acceptance evidence for the new gateway build. A partial live revalidation on 2026-08-21 returned three `429 local_queue_full` failures; the current mandatory matrix and release decision are in `docs/P0-P2-PRODUCTION-READINESS.md`.
 
 Date: 2026-08-21
 

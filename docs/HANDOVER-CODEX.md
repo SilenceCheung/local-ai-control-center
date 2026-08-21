@@ -22,7 +22,7 @@
 | 跨进程状态 | `data/runtime_state.json` · `data/gateway_stats.json` · `data/lacc.db`(SQLite) |
 | launchd | `com.localai.controlcenter.{backend,gateway}`（`RunAtLoad=false`；KeepAlive 仅在 job 已 load 时崩溃拉起。默认 Quit 会 `bootout`） |
 | CLI | `~/.local/bin/local-ai {start,stop,restart,status,benchmark,logs,open,app}` |
-| 必检 | `.venv/bin/python -m pytest backend/tests -q`（当前 Target 重下、Runtime 未加载：75 passed / 17 live skipped）· `cd frontend && npx vitest run` · `pnpm build` · `swift build` 或 App：`bash scripts/build_app.sh` |
+| 必检 | `.venv/bin/python -m pytest -q --ignore=backend/tests/test_api.py --ignore=backend/tests/test_agent_loop.py`（当前 80 passed）· `cd frontend && pnpm build && pnpm lint` · App：`bash scripts/build_app.sh`。实时 Agent 用例必须单独串行跑并记录队列状态，不能混在普通单测里宣称通过 |
 
 ## 接手必读（5 分钟）
 
@@ -31,12 +31,25 @@
 3. **不造假原则**贯穿全部：Safe 模式无 /metrics 就显示 `—`；GPU 不可得就不显示；协议缺口写在 Agents 页。禁止 mock 数据。
 4. 项目**必须**在 `~/AI/`：macOS TCC 拦截 launchd 访问 Desktop（实测 exit 78，`ls` 都会 Operation not permitted）。
 5. **菜单栏 App 消费 `/api`，同时拥有会话生命周期**：打开 App 拉起 8787/8080（不自动加载 27B）；Start 加载模型；Stop 只卸载；**默认 Quit 卸载模型并 bootout 控制面**（Settings 可「退出后保持 API」）。Swift 模型字段必须跟 `backend/api/routes.py` 的 snake_case JSON 对齐（`convertFromSnakeCase`）。构建只能走 `scripts/build_app.sh`。UI 字符串走 `Support/{en,zh-Hans}.lproj/Localizable.strings` + `L10n.t`；**必须显式加载 `.lproj` 包**（`system` 下任意 `zh*` 系统语言 → 简体），禁止只依赖 `Bundle.main` 自动匹配。Web 走 `frontend/src/i18n/`。可选覆盖写入 `config.yaml` 的 `ui.language`（App 在 **Settings** 改语言，菜单栏 Popover 不再放语言选择）。禁止写死 `/Users/<username>/...` 作为项目根。登录项启动的是 **App**，不是无界面 8787。**禁止** `pip install dflash` 覆盖 `dflash-mlx` 的 `dflash serve`。Fast 配方在 Settings：`heretic`（默认）与 `official_dflash2`。模型下载落到 `model_dirs` 里第一个非 HF hub 目录（默认 `~/.lmstudio/models/{org}/{name}`）；换库必须手动选文件夹或把文件夹拖到 Models / Settings General，禁止静默改路径。菜单栏状态图标必须是 **template SF Symbol**。Console 侧栏用 `HStack`+`List`，Models 检查器用页内 `HStack` 分栏，**禁止** `NavigationSplitView` / `HSplitView` / `.inspector` / `.searchable`（macOS 上会在后台线程建 `NSSplitViewController` 并 SIGABRT）。分发目标 Developer ID 公证（`scripts/notarize.sh`，profile `local-ai-notary` 或 `$NOTARY_PROFILE`），**不加 App Sandbox**。多层图标要 Icon Composer + Xcode，当前是单层 icns。
-6. **模型下载删除边界**：下载页不再提供整目录删除。「从列表移除」只删账本；「清理下载残片」只删 `.part` 与 `.download-incomplete`，保留 config、safetensors 和目录。完整模型整目录删除只允许从「已安装」发起，API 还要求 `scope=installed_model` + 精确 `confirm_model_id`，旧请求直接 422。账本 `data/downloads.json`。旧 `/models/pull/cancel` 等于暂停。
+6. **模型下载所有权与删除边界**：下载页只管理本 App 发起的任务，不能把其他软件下载留下的 `.part` 认领成“已暂停”。旧账本会与磁盘重新对账：外部已完成的 legacy 记录自动退场并触发模型库重扫；本 App 发起但被外部补完的任务标记 `completion_source=disk`。「从列表移除」只删账本；「清理下载残片」只删 `.part` 与 `.download-incomplete`；完整模型整目录删除只允许从「已安装」发起，API 要求 `scope=installed_model` + 精确 `confirm_model_id`。旧 `/models/pull/cancel` 等于暂停。
 7. **8080 是 Agent 协议网关**，不是聊天转发。Grok/Codex 的 `/v1/responses`、Chat `tool_choice`、Claude Code 的 `/v1/messages` 在 `backend/compat/` 译成引擎 Chat Completions。默认 production 配方：输出上限 4096、工具任务关闭隐藏思考、最多 2 个等待、排队 60 秒；显式 `X-LocalAI-Profile: deep` 才放到 16384。相同请求不会重复入队。改网关后必须重启 **gateway 进程**。
 
 > **分发决策（2026-08-21）**：Developer ID + 公证继续作为 Track A 主版本，且保持无 Sandbox；Mac App Store 是 Track B 独立架构支线，必须独立 target、bundle id、entitlements、helper、文件权限与发布门禁。不得给 Track A 直接打开 Sandbox。完整边界见 `docs/DISTRIBUTION-STRATEGY.md`。
 
 ## §0 变更日志（倒序）
+
+### 0.0 · 2026-08-21 — 下载账本所有权与外部模型完成态对账
+
+| 主题 | 说明 | 关键文件 |
+|---|---|---|
+| 根因 | 旧版会扫描任意外部 `.part` 并合成 App 的 `paused` 任务；外部软件完成下载并移除 `.part` 后，持久化账本没有反向对账，所以角标和暂停行长期残留 | `backend/models/pull.py` `data/downloads.json` |
+| 所有权 | 新任务写入 `source=app`；不再把外部半成品合成下载任务。`legacy/discovered` 完成记录自动移出账本，本 App 任务被外部补完则保留为 `done + completion_source=disk` | `backend/models/pull.py` |
+| 完整性 | 分片模型必须具备 config、合法 safetensors index、index 引用的全部非空分片，且无 `.part` / incomplete marker；拒绝 index 路径越界 | `backend/models/registry.py` |
+| 联动与 UI | 对账完成返回 `reconciled_models` 并触发 registry rescan；原生/Web 同步刷新“已安装”，下载角标只统计活动、暂停和错误任务；文案明确外部模型通过库重扫识别 | `backend/api/routes.py` `AppStore.swift` `PagesCore.swift` `Models.tsx` |
+
+**当前实机事实（提交 `011cd8d`）**：官方 Target 已完整恢复，3 个 safetensors 分片共 **16,081,498,220 bytes**，registry 为 `available / mlx / target`；下载账本 `items=[]`；`official_dflash2` 已加载 Target + `z-lab/Qwen3.8-27B-DFlash2`，Runtime/Gateway 健康。非实时 Python **80 passed**，前端 production build、原生 release App、Hardened Runtime codesign 与 GitHub CI 均通过。
+
+**仍未通过的生产门禁**：本机串行实时 Agent 回归中有 3 个工具循环请求因队列等待超过 60 秒返回 HTTP 429 `local_queue_full`；中断测试后 scheduler 已恢复 `active=0 / waiting=0`。这不是下载修复回归，但说明“长时间高频生产力级”仍不能签字，下一步必须专项复核请求释放、取消传播和单槽并发策略。
 
 ### 0.0 · 2026-08-21 — P0–P2 生产加固 + 下载误删止血
 
@@ -48,9 +61,9 @@
 | 恢复 P1 | 活动/排队请求提供 cancel endpoint；队列轮询取消；流在取消或 300s production deadline 后关闭上游连接并释放 lease | `POST /gateway/requests/{id}/cancel` |
 | 观测 P2 | `/gateway/stats` 展示 effective budget、profile、deadline、queue、duplicate/cancel/budget totals、活动请求与实时 cache；原生 App API 页每 2s 展示请求并可取消 | `backend/gateway.py` `Models.swift` `PagesDFlash.swift` |
 
-**当前事实**：用户误删的 `lmstudio-community/Qwen3.8-27B-MLX-4bit` 正在 LM Studio 重新下载；最后检查约 6.0GB，三个权重仍为 `.part`。本轮未停止下载、未重启 Runtime、未做 27B live soak。代码门禁：Python 75 passed / 17 live skipped；Web 9 passed；Vite production、Swift debug/release、ad-hoc Hardened Runtime App 与 codesign 均通过。完整生产验收与未完成边界见 `docs/P0-P2-PRODUCTION-READINESS.md`。
+**该段历史状态已被上一条更新取代**：Target 已重新下载完整并恢复 Runtime；原有 P0–P2 代码门禁仍有效，但新版实时 Agent soak 暴露 `429 local_queue_full`，完整生产验收尚未通过。当前判定见 `docs/P0-P2-PRODUCTION-READINESS.md`。
 
-> 取消的已知边界：网关能停止排队和关闭客户端/上游连接，但 `dflash-mlx 0.1.10` 没有公开 interrupt API。必须在模型下载完成后验证断连是否能在 10 秒内真正停止 Metal generation；不满足则只能通过固定 commit 的 runtime fork 增加 request-id interrupt，不能把当前 best-effort cancel 宣称为硬取消。
+> 取消的已知边界：网关能停止排队和关闭客户端/上游连接，但 `dflash-mlx 0.1.10` 没有公开 interrupt API。Target 已恢复，下一轮必须验证断连是否能在 10 秒内真正停止 Metal generation；不满足则只能通过固定 commit 的 runtime fork 增加 request-id interrupt，不能把当前 best-effort cancel 宣称为硬取消。
 
 ### 0.0 · 2026-08-21 — DFlash 配置真相层 + 等待重启交互
 
@@ -221,6 +234,8 @@
 - `bash scripts/build_app.sh` → `dist/Local AI.app` v0.4.0（ad-hoc Hardened Runtime，未公证）
 
 ### 0.0 · 2026-08-20 — v0.3.16 模型下载列表：排队、暂停续传、删除
+
+> 历史行为记录：其中“从磁盘自动回填外部半成品”和下载页整目录删除已被 2026-08-21 的所有权/删除边界修复取代，不得按本节恢复旧逻辑。
 
 | 主题 | 说明 | 关键文件 |
 |---|---|---|
@@ -679,7 +694,7 @@
 
 ## §2 数据契约
 
-- `data/downloads.json`：下载队列账本（`repo_id` / `status` / `queue`）。暂停保留 `.part`；崩溃中的 `running` 重启后回填为 `paused`。API：`POST/GET /api/models/pull`，`POST /api/models/pull/{pause,resume,dismiss}`，`POST /api/models/delete`。旧 `cancel` = 暂停。
+- `data/downloads.json`：仅记录本 App 拥有的下载队列（`repo_id` / `status` / `source` / `completion_source` / `queue`）。新任务 `source=app`；暂停保留 `.part`；崩溃中的 `running` 重启后回填为 `paused`。外部 `.part` 不入账；legacy 外部任务在模型完整后自动清理。API：`POST/GET /api/models/pull`，`POST /api/models/pull/{pause,resume,dismiss}`，`POST /api/models/delete`。旧 `cancel` = 暂停。
 - `runtime_state.json`：`status/mode/pid/internal_port/alias/target_*/draft_*`——Gateway 与 Backend 都读它，写必须走 `write_state`（tmp+rename）。
 - SQLite `data/lacc.db`：models / benchmark_runs / runtime_events / agent_connections / settings_kv。默认不存 prompt 正文。
 - dflash `/metrics`（dflash-mlx 0.1.8）：推理中读 `current_request.{decode_tok_s,acceptance_rate,ttft_s}` 与 `rates.active_decode_tok_s`、`memory.rss_gb`；`rates.average_decode_tok_s` 与 `recent_requests` 在请求结束前经常为空。旧字段仍作回退。映射见 `runtime_fields_from_dflash`。
@@ -705,7 +720,7 @@
 | 切到官方 DFlash 2 起不来 | 先确认 Target/Draft 都已完整下载并扫描。引擎必须是固定 commit `60803233`（包版本 0.1.10）；`dflash doctor` 与 `dflash models` 应同时通过并列出 Qwen3.8。禁止 `pip install dflash` 覆盖 serve |
 | Discover 搜索 502 / 没有推荐 | `huggingface_hub` 1.x 禁止 `list_models(direction=)`。空查询也会拉热门 MLX。改完必须重启 8787 |
 | 下载中断后从头开始 | v0.3.11 起半成品是 `{file}.part`。v0.3.16 用下载列表暂停/继续；删除才会清文件夹 |
-| 下载列表没有半成品 | 控制面要读得到库目录。崩溃中的 running 会回填为 paused。重启 8787 |
+| 其他软件下载时，下载页没有“暂停”行 | 这是当前正确语义：下载页只管理本 App 发起的任务。外部完成后点 Rescan（若存在旧 legacy 记录会自动对账并重扫），模型应出现在“已安装”，不得恢复旧的自动认领行为 |
 | Grok/Codex 开始正常随后 Agent 退出 | 旧网关把 `/v1/responses` 原样转给 dflash（400），Chat 的 function `tool_choice` 也被拒。v0.4.0 在网关翻译。必须重启 **8080**。心跳不得 `wait_for` 取消上游读，否则预填充 >15s 会丢 chunk |
 | CodeG/Claude CLI「模型不存在」或 HTTP 503 连打 | Claude 把 **HTTP 404** 一律说成模型不存在。① `?beta=true` 打进 path（v0.4.1 已规范化）；② 27B 刚 Start（网关重试并改 503）；③ CodeG 并行第二路在第一路 prefill 时打进来（v0.4.2 锁覆盖整段 SSE）；④ Claude 在 user 后再发一段 system，Qwen 拒绝（v0.4.2 合并到开头）。改网关后只重启 8080。CodeG 请 **新建会话**，不要接着失败的旧回合 |
 | 右键状态栏菜单往下跳 | 旧代码 `popUp` 锚在按钮上沿，且打开控制台会立刻切 `.regular`。v0.3.12 锚下沿并等菜单关闭再执行动作 |
@@ -732,4 +747,4 @@
 | 仅文档 | §0 记「文档维护」 |
 
 ---
-上次结构化更新：2026-08-21 · DFlash2 staging（引擎完成，模型与真机 A/B 进行中）
+上次结构化更新：2026-08-21 · 下载账本所有权修复、Target 恢复与实时 Agent 429 风险复核（`011cd8d`）

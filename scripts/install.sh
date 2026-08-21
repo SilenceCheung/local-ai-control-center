@@ -8,8 +8,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
+DFLASH_MLX_REF="${DFLASH_MLX_REF:-60803233af4589e18588b9bacbb03880801c828a}"
+DFLASH_MLX_URL="git+https://github.com/bstnxbt/dflash-mlx.git@${DFLASH_MLX_REF}"
 
 echo "== Local AI Control Center installer =="
+
+if [ ! -f config/config.yaml ]; then
+  cp config/config.example.yaml config/config.yaml
+  echo "created local config/config.yaml from the public example"
+fi
 
 PY=""
 for cand in python3.12 python3.11 python3.13; do
@@ -22,8 +29,8 @@ if [ ! -x .venv/bin/python ]; then
   "$PY" -m venv .venv
 fi
 .venv/bin/pip install -q --upgrade pip
-.venv/bin/pip install -q dflash-mlx mlx-lm fastapi "uvicorn[standard]" httpx pyyaml psutil pytest pytest-asyncio
-echo "python deps ok"
+.venv/bin/pip install -q "$DFLASH_MLX_URL" mlx-lm fastapi "uvicorn[standard]" httpx pyyaml psutil pytest pytest-asyncio huggingface_hub
+echo "python deps ok (dflash-mlx ref: $DFLASH_MLX_REF)"
 
 if command -v pnpm >/dev/null 2>&1; then
   (cd frontend && pnpm install --silent && pnpm build >/dev/null)

@@ -1,12 +1,34 @@
 .venv/
 __pycache__/
 *.pyc
+
+# Local runtime state and agent transcripts may contain prompts or paths.
+logs/
+data/
+.artifacts/
+
+# Local mutable configuration. Public defaults live in config.example.yaml
+# and backend/core/config.py.
+config/config.yaml
+config/*.local.yaml
+
+# Generated machine-specific launchd files contain absolute paths.
+launchd/*.plist
+
 node_modules/
 frontend/dist/
-logs/*.log*
-data/*.db*
-data/*.json
-.artifacts/
-.DS_Store
 apps/LocalAIApp/.build/
 dist/
+
+# Signing, notarization and developer-local environment files.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.mobileprovision
+*.xcarchive
+*.dSYM/
+
+.DS_Store

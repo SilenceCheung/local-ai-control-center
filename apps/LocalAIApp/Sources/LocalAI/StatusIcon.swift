@@ -1,6 +1,6 @@
 import AppKit
 
-enum StatusKind {
+enum StatusKind: Equatable {
     case idle, starting, running, warn, error
 
     static func from(_ rt: RuntimeStatus, backendUp: Bool) -> StatusKind {
@@ -13,46 +13,38 @@ enum StatusKind {
         }
     }
 
-    var accessibilityLabel: String {
+    var symbolName: String {
         switch self {
-        case .idle: return "Runtime stopped"
-        case .starting: return "Runtime starting"
-        case .running: return "Runtime running"
-        case .warn: return "Runtime running, not healthy"
-        case .error: return "Control plane or runtime error"
+        case .idle: return "cpu"
+        case .starting: return "clock.arrow.circlepath"
+        case .running: return "cpu.fill"
+        case .warn: return "exclamationmark.triangle.fill"
+        case .error: return "xmark.octagon.fill"
         }
     }
+
+    var accessibilityLabel: String {
+        switch self {
+        case .idle: return L10n.t("status.stopped")
+        case .starting: return L10n.t("status.starting")
+        case .running: return L10n.t("status.running")
+        case .warn: return L10n.t("status.unhealthy")
+        case .error: return L10n.t("status.control_down")
+        }
+    }
+
+    var accessibilityValue: String { accessibilityLabel }
 }
 
 enum StatusIcon {
-    static func image(kind: StatusKind, appearance: NSAppearance?) -> NSImage {
-        let size = NSSize(width: 18, height: 18)
-        let image = NSImage(size: size, flipped: false) { rect in
-            let dark = appearance?.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            let glyph = dark ? NSColor.white : NSColor.black
-            let cpu = NSImage(systemSymbolName: "cpu", accessibilityDescription: nil)
-            let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
-            if let cpu = cpu?.withSymbolConfiguration(config) {
-                let framed = NSRect(x: 0, y: 2, width: 14, height: 14)
-                cpu.draw(in: framed, from: .zero, operation: .sourceOver, fraction: 0.92)
-            } else {
-                glyph.setFill()
-                NSBezierPath(ovalIn: NSRect(x: 4, y: 4, width: 8, height: 8)).fill()
-            }
-            let color: NSColor = {
-                switch kind {
-                case .idle: return NSColor.tertiaryLabelColor
-                case .starting: return NSColor.systemOrange
-                case .running: return NSColor.systemGreen
-                case .warn: return NSColor.systemOrange
-                case .error: return NSColor.systemRed
-                }
-            }()
-            color.setFill()
-            NSBezierPath(ovalIn: NSRect(x: 11, y: 1, width: 6, height: 6)).fill()
-            return true
-        }
-        image.isTemplate = false
+    /// Menu-bar extra: template SF Symbol so Aqua/Dark menu bars tint it.
+    /// State is the glyph, not a color-only pip.
+    static func image(kind: StatusKind) -> NSImage {
+        let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
+        let named = NSImage(systemSymbolName: kind.symbolName, accessibilityDescription: kind.accessibilityLabel)
+        let configured = named?.withSymbolConfiguration(config)
+        let image = (configured?.copy() as? NSImage) ?? named ?? NSImage(size: NSSize(width: 18, height: 18))
+        image.isTemplate = true
         return image
     }
 }

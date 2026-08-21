@@ -1,0 +1,73 @@
+api:
+  host: 127.0.0.1
+  port: 8080
+  api_key: local
+  alias: Qwen3.8-27B-4bit
+  alias_auto: true
+  alias_source: lmstudio-community/Qwen3.8-27B-MLX-4bit
+dashboard:
+  host: 127.0.0.1
+  port: 8787
+runtime:
+  provider: mlx
+  internal_host: 127.0.0.1
+  internal_port: 18080
+  mode: fast
+  auto_load: false
+  target_model: lmstudio-community/Qwen3.8-27B-MLX-4bit
+  draft_model: z-lab/Qwen3.8-27B-DFlash2
+  max_context: 131072
+  default_max_tokens: 4096
+  enable_thinking: true
+dflash:
+  enabled: true
+  verify_mode: adaptive
+  verify_len_cap: 0
+  draft_quant: w4:gs64
+  fastpath_max_tokens: 0
+  prefix_cache: true
+  prefill_step_size: 2048
+  draft_sink_size: 64
+  draft_window_size: 1024
+  prefix_cache_l2: true
+  prefix_cache_max_entries: 4
+  prefix_cache_max_bytes: 8GB
+  prefix_cache_l2_max_bytes: 50GB
+  cache_limit: 4GB
+  runtime_block_size: 0
+  draft_bits: 4
+  reasoning: xhigh
+recipes:
+  active: official_dflash2
+  heretic:
+    target_model: McG-221/Qwen3.8-27B-heretic-ara-mlx-8Bit
+    draft_model: jfan/Qwen3.8-27B-heretic-dflash
+    dflash:
+      verify_mode: adaptive
+      verify_len_cap: 0
+      draft_quant: default
+      runtime_block_size: 0
+      draft_bits: 0
+      reasoning: default
+  official_dflash2:
+    target_model: lmstudio-community/Qwen3.8-27B-MLX-4bit
+    draft_model: z-lab/Qwen3.8-27B-DFlash2
+    dflash:
+      verify_mode: adaptive
+      verify_len_cap: 0
+      draft_quant: w4:gs64
+      runtime_block_size: 0
+      draft_bits: 4
+      reasoning: xhigh
+model_dirs:
+  - ~/.lmstudio/models
+  - ~/.cache/huggingface/hub
+logging:
+  level: INFO
+memory:
+  swap_warn_gb: 4.0
+  pressure_warn_pct: 75
+privacy:
+  log_prompts: false
+ui:
+  language: system

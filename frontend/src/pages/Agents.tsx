@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api, type AgentInfo } from "../api/client";
 import { usePoll } from "../hooks/usePoll";
 import { Badge, CopyField, ErrorPanel, Section } from "../components/ui";
+import { useI18n } from "../i18n";
 
 interface TestResult {
   ok: boolean; models_ok?: boolean; chat_ok?: boolean; reply?: string;
@@ -9,6 +10,7 @@ interface TestResult {
 }
 
 export default function Agents() {
+  const { t } = useI18n();
   const { data: agents, refresh } = usePoll<AgentInfo[]>(() => api.get("/agents"), 20000);
   const [testing, setTesting] = useState(false);
   const [test, setTest] = useState<TestResult | null>(null);
@@ -26,14 +28,14 @@ export default function Agents() {
 
   return (
     <>
-      <h1 className="page-title">Agents</h1>
-      <p className="page-sub">Connect coding agents and IDEs to the local model — one alias, one endpoint, no per-agent drift</p>
+      <h1 className="page-title">{t("nav.agents")}</h1>
+      <p className="page-sub">{t("agents.sub")}</p>
 
       <Section
-        title="Connection Test"
+        title={t("agents.test_box")}
         actions={
           <button className="btn primary small" onClick={runTest} disabled={testing}>
-            {testing ? "Testing…" : "Test Connection"}
+            {testing ? t("agents.testing") : t("agents.test")}
           </button>
         }
       >
@@ -49,13 +51,13 @@ export default function Agents() {
             test.ok ? (
               <div>
                 <div className="row" style={{ gap: 8, marginBottom: 8 }}>
-                  <Badge kind="ok">models OK</Badge>
-                  <Badge kind="ok">chat OK · {test.elapsed_s}s</Badge>
+                  <Badge kind="ok">{t("agents.test.models")}</Badge>
+                  <Badge kind="ok">{t("agents.test.chat", { s: test.elapsed_s ?? "—" })}</Badge>
                 </div>
                 <code style={{ fontSize: 11.5, color: "var(--text-2)" }}>reply: {test.reply}</code>
               </div>
             ) : (
-              <ErrorPanel what="Connection test failed" detail={test.error ?? "unknown"} onRetry={runTest} />
+              <ErrorPanel what={t("agents.test.fail")} detail={test.error ?? t("agents.unknown")} onRetry={runTest} />
             )
           )}
         </div>
@@ -66,26 +68,26 @@ export default function Agents() {
           <div className="card">
             <div className="row between" style={{ marginBottom: 12 }}>
               <span className="row" style={{ gap: 8 }}>
-                {a.status === "connected" ? <Badge kind="ok">Connected</Badge>
-                  : a.status === "seen_before" ? <Badge kind="idle">Seen earlier</Badge>
-                  : a.not_supported_natively ? <Badge kind="warn">Needs Anthropic gateway</Badge>
-                  : <Badge kind="idle">Unknown</Badge>}
-                <span style={{ color: "var(--text-3)", fontSize: 11.5 }}>{a.protocol.toUpperCase()} protocol</span>
+                {a.status === "connected" ? <Badge kind="ok">{t("agents.connected")}</Badge>
+                  : a.status === "seen_before" ? <Badge kind="idle">{t("agents.seen")}</Badge>
+                  : a.not_supported_natively ? <Badge kind="warn">{t("agents.needs_gateway")}</Badge>
+                  : <Badge kind="idle">{t("overview.unknown")}</Badge>}
+                <span style={{ color: "var(--text-3)", fontSize: 11.5 }}>{t("agents.protocol", { p: a.protocol.toUpperCase() })}</span>
               </span>
             </div>
             <p style={{ color: "var(--text-2)", fontSize: 12.5, marginTop: 0 }}>{a.instructions}</p>
             {!a.not_supported_natively && (
               <div className="grid" style={{ gridTemplateColumns: "1fr", gap: 6 }}>
-                <CopyField label="Base URL" value={a.config.base_url} />
-                <CopyField label="API Key" value={a.config.api_key} />
-                <CopyField label="Model" value={a.config.model} />
+                <CopyField label={t("api.base")} value={a.config.base_url} />
+                <CopyField label={t("api.key")} value={a.config.api_key} />
+                <CopyField label={t("api.model")} value={a.config.model} />
               </div>
             )}
             {a.config_snippet && (
               <div style={{ marginTop: 10 }}>
                 <div className="row between" style={{ marginBottom: 4 }}>
-                  <span className="stat-label">Config snippet</span>
-                  <button className="btn small" onClick={() => navigator.clipboard.writeText(a.config_snippet!)}>Copy</button>
+                  <span className="stat-label">{t("agents.snippet")}</span>
+                  <button className="btn small" onClick={() => navigator.clipboard.writeText(a.config_snippet!)}>{t("common.copy")}</button>
                 </div>
                 <code style={{ display: "block", whiteSpace: "pre-wrap", fontSize: 11, background: "var(--surface-2)", padding: 10, borderRadius: 6, border: "1px solid var(--border)" }}>
                   {a.config_snippet}

@@ -1,14 +1,17 @@
 import { useEffect, useState } from "react";
-import { api, type AppConfig } from "../api/client";
+import { api, type AppConfig, type RecipesStatus } from "../api/client";
 import { usePoll } from "../hooks/usePoll";
-import { Badge, ErrorPanel, Section, Toggle } from "../components/ui";
+import { Badge, AliasField, ErrorPanel, Section, Toggle } from "../components/ui";
+import { useI18n } from "../i18n";
 
 interface ServiceStatus {
   [k: string]: { service: string; label: string; installed: boolean; loaded: boolean; pid: number | null };
 }
 
 export default function Settings() {
+  const { t, pref, setPref } = useI18n();
   const { data: cfg, refresh } = usePoll<AppConfig>(() => api.get("/settings"), 30000);
+  const { data: recipes, refresh: refreshRecipes } = usePoll<RecipesStatus>(() => api.get("/recipes"), 15000);
   const { data: svc, refresh: refreshSvc } = usePoll<ServiceStatus>(() => api.get("/service/status"), 20000);
   const [err, setErr] = useState<string | null>(null);
   const [restartNeeded, setRestartNeeded] = useState(false);
@@ -39,46 +42,110 @@ export default function Settings() {
     finally { void refreshSvc(); }
   };
 
-  if (!cfg) return <p className="empty">Loading settings…</p>;
+  if (!cfg) return <p className="empty">{t("settings.loading")}</p>;
 
   return (
     <>
-      <h1 className="page-title">Settings</h1>
-      <p className="page-sub">Single source of truth: config/config.yaml — changes persist immediately</p>
+      <h1 className="page-title">{t("nav.settings")}</h1>
+      <p className="page-sub">{t("settings.sub")}</p>
 
-      {err && <ErrorPanel what="Settings update failed" detail={err} />}
+      {err && <ErrorPanel what={t("settings.err")} detail={err} />}
       {restartNeeded && (
         <div className="advisory warn" role="status">
-          <span>Runtime settings changed — restart the runtime to apply.</span>
+          <span>{t("settings.restart.body")}</span>
           <button className="btn small" onClick={async () => { await api.post("/runtime/restart"); setRestartNeeded(false); }}>
-            Restart now
+            {t("settings.restart.now")}
           </button>
         </div>
       )}
 
-      <Section title="General">
+      <Section title={t("settings.general")}>
         <div className="card" style={{ padding: "6px 20px" }}>
           <div className="kv">
-            <span className="k">Appearance</span>
+            <span className="k">{t("lang.label")}</span>
             <span className="v">
-              <select value={theme} onChange={(e) => setTheme(e.target.value)} aria-label="Theme">
-                <option value="system">System</option>
-                <option value="light">Light</option>
-                <option value="dark">Dark</option>
+              <select aria-label={t("lang.label")} value={pref} onChange={(e) => setPref(e.target.value as "system" | "en" | "zh-Hans")}>
+                <option value="system">{t("lang.system")}</option>
+                <option value="en">{t("lang.en")}</option>
+                <option value="zh-Hans">{t("lang.zh")}</option>
               </select>
             </span>
           </div>
           <div className="kv">
-            <span className="k">Model alias<small>What agents see as the model name</small></span>
-            <span className="v mono">{cfg.api.alias}</span>
+            <span className="k">{t("settings.appearance")}</span>
+            <span className="v">
+              <select value={theme} onChange={(e) => setTheme(e.target.value)} aria-label={t("settings.appearance")}>
+                <option value="system">{t("settings.theme.system")}</option>
+                <option value="light">{t("settings.theme.light")}</option>
+                <option value="dark">{t("settings.theme.dark")}</option>
+              </select>
+            </span>
+          </div>
+          <div className="kv">
+            <span className="k">{t("settings.alias")}<small>{t("settings.alias.sub")}</small></span>
+            <span className="v" style={{ flex: 1, justifyContent: "flex-end" }}>
+              {cfg && (
+                <div style={{ minWidth: 280, maxWidth: 420, width: "100%" }}>
+                  <AliasField
+                    alias={cfg.api.alias}
+                    aliasAuto={cfg.api.alias_auto ?? true}
+                    onSave={(name) => patch({ api: { alias: name, alias_auto: false } })}
+                    onReset={() => patch({ api: { alias_auto: true } })}
+                  />
+                </div>
+              )}
+            </span>
           </div>
         </div>
       </Section>
 
-      <Section title="Runtime">
+      <Section title={t("settings.runtime")}>
         <div className="card" style={{ padding: "6px 20px" }}>
           <div className="kv">
-            <span className="k">Max context<small>Hard cap for the inference engine</small></span>
+            <span className="k">{t("settings.recipe")}<small>{t("settings.recipe.sub")}</small></span>
+            <span className="v">
+              <select
+                aria-label={t("settings.recipe")}
+                value={recipes?.active ?? "heretic"}
+                onChange={async (e) => {
+                  setErr(null);
+                  try {
+                    const r = await api.post<{ restart_required: boolean }>("/recipes/activate", { id: e.target.value });
+                    if (r.restart_required) setRestartNeeded(true);
+                  } catch (ex) {
+                    setErr(ex instanceof Error ? ex.message : String(ex));
+                  } finally {
+                    void refresh(); void refreshRecipes();
+                  }
+                }}
+              >
+                <option value="heretic">{t("settings.recipe.heretic")}</option>
+                <option value="official_dflash2">{t("settings.recipe.official")}</option>
+              </select>
+            </span>
+          </div>
+          <p style={{ color: "var(--text-3)", fontSize: 11.5, margin: "0 0 8px" }}>
+            {(recipes?.active ?? "heretic") === "official_dflash2"
+              ? t("settings.recipe.official.sub")
+              : t("settings.recipe.heretic.sub")}
+          </p>
+          {cfg.runtime.target_model && (
+            <div className="kv">
+              <span className="k">{t("api.model")}</span>
+              <span className="v mono" style={{ fontSize: 11 }}>{cfg.runtime.target_model}</span>
+            </div>
+          )}
+          {!!recipes?.missing?.length && (
+            <p style={{ color: "var(--warn, #b45309)", fontSize: 12, margin: "8px 0" }}>
+              {t("dflash.missing")}{" "}
+              {recipes.missing.map((m) => m.id).join(" · ")}{" "}
+              <a href={`/models?tab=discover&q=${encodeURIComponent(recipes.missing[0].id)}`}>
+                {t("dflash.missing.download")}
+              </a>
+            </p>
+          )}
+          <div className="kv">
+            <span className="k">{t("settings.context")}<small>{t("settings.context.sub")}</small></span>
             <span className="v">
               <select value={cfg.runtime.max_context}
                       onChange={(e) => patch({ runtime: { max_context: Number(e.target.value) } })}>
@@ -89,7 +156,7 @@ export default function Settings() {
             </span>
           </div>
           <div className="kv">
-            <span className="k">Default max tokens</span>
+            <span className="k">{t("settings.tokens")}</span>
             <span className="v">
               <select value={cfg.runtime.default_max_tokens}
                       onChange={(e) => patch({ runtime: { default_max_tokens: Number(e.target.value) } })}>
@@ -98,23 +165,23 @@ export default function Settings() {
             </span>
           </div>
           <div className="kv">
-            <span className="k">Thinking mode<small>Qwen3.8 reasoning traces — better quality, more tokens</small></span>
+            <span className="k">{t("settings.thinking")}<small>{t("settings.thinking.sub")}</small></span>
             <span className="v">
               <Toggle checked={cfg.runtime.enable_thinking}
-                      onChange={(v) => patch({ runtime: { enable_thinking: v } })} label="Thinking mode" />
+                      onChange={(v) => patch({ runtime: { enable_thinking: v } })} label={t("settings.thinking")} />
             </span>
           </div>
         </div>
       </Section>
 
-      <Section title="Startup">
+      <Section title={t("settings.startup")}>
         <div className="card" style={{ padding: "6px 20px" }}>
           <div className="kv">
-            <span className="k">Auto-load model on login
-              <small>Off by default — a 27B model pins ~29 GB of unified memory</small></span>
+            <span className="k">{t("settings.autoload")}
+              <small>{t("settings.autoload.sub")}</small></span>
             <span className="v">
               <Toggle checked={cfg.runtime.auto_load}
-                      onChange={(v) => patch({ runtime: { auto_load: v } })} label="Auto load" />
+                      onChange={(v) => patch({ runtime: { auto_load: v } })} label={t("settings.autoload.short")} />
             </span>
           </div>
           {["backend", "gateway"].map((s) => (
@@ -122,66 +189,65 @@ export default function Settings() {
               <span className="k">launchd · {s}
                 <small>{svc?.[s]?.label ?? ""}</small></span>
               <span className="v">
-                {svc?.[s]?.loaded ? <Badge kind="ok">running · pid {svc[s].pid ?? "?"}</Badge>
-                  : svc?.[s]?.installed ? <Badge kind="warn">installed, not running</Badge>
-                  : <Badge kind="idle">not installed</Badge>}
+                {svc?.[s]?.loaded ? <Badge kind="ok">{t("settings.launchd.running", { pid: svc[s].pid ?? "?" })}</Badge>
+                  : svc?.[s]?.installed ? <Badge kind="warn">{t("settings.launchd.installed")}</Badge>
+                  : <Badge kind="idle">{t("settings.launchd.none")}</Badge>}
                 {svc?.[s]?.installed
-                  ? <button className="btn small" onClick={() => svcAction(s, "uninstall")}>Remove</button>
-                  : <button className="btn small" onClick={() => svcAction(s, "install")}>Install</button>}
+                  ? <button className="btn small" onClick={() => svcAction(s, "uninstall")}>{t("settings.remove")}</button>
+                  : <button className="btn small" onClick={() => svcAction(s, "install")}>{t("settings.install")}</button>}
               </span>
             </div>
           ))}
         </div>
         <p style={{ color: "var(--text-3)", fontSize: 11.5, marginTop: 8 }}>
-          Installing launchd services keeps the dashboard and API gateway available after login and restarts
-          them if they crash. The model itself only loads when you press Start (or enable auto-load).
+          {t("settings.launchd.note")}
         </p>
       </Section>
 
-      <Section title="Privacy">
+      <Section title={t("settings.privacy")}>
         <div className="card" style={{ padding: "6px 20px" }}>
           <div className="kv">
-            <span className="k">Telemetry</span>
-            <span className="v"><Badge kind="ok">none — local first</Badge></span>
+            <span className="k">{t("settings.telemetry")}</span>
+            <span className="v"><Badge kind="ok">{t("settings.telemetry.none")}</Badge></span>
           </div>
           <div className="kv">
-            <span className="k">Prompt logging<small>Prompt/response bodies are never persisted unless enabled</small></span>
+            <span className="k">{t("settings.prompts")}<small>{t("settings.prompts.sub")}</small></span>
             <span className="v">
               <Toggle checked={cfg.privacy.log_prompts}
-                      onChange={(v) => patch({ privacy: { log_prompts: v } })} label="Prompt logging" />
+                      onChange={(v) => patch({ privacy: { log_prompts: v } })} label={t("settings.prompts")} />
             </span>
           </div>
         </div>
       </Section>
 
-      <Section title="Advanced">
+      <Section title={t("settings.advanced")}>
         <div className="card" style={{ padding: "6px 20px" }}>
           <div className="kv" style={{ cursor: "pointer" }} onClick={() => setAdvancedOpen(!advancedOpen)}
                role="button" tabIndex={0}
                onKeyDown={(e) => e.key === "Enter" && setAdvancedOpen(!advancedOpen)}>
-            <span className="k">Show advanced options</span>
-            <span className="v">{advancedOpen ? "Hide" : "Show"}</span>
+            <span className="k">{t("settings.advanced.show")}</span>
+            <span className="v">{advancedOpen ? t("settings.hide") : t("settings.show")}</span>
           </div>
           {advancedOpen && (
             <>
               <div className="kv">
-                <span className="k">API port</span>
+                <span className="k">{t("settings.api_port")}</span>
                 <span className="v mono">{cfg.api.port}</span>
               </div>
               <div className="kv">
-                <span className="k">Dashboard port</span>
+                <span className="k">{t("settings.dash_port")}</span>
                 <span className="v mono">{cfg.dashboard.port}</span>
               </div>
               <div className="kv">
-                <span className="k">Runtime internal port</span>
+                <span className="k">{t("settings.rt_port")}</span>
                 <span className="v mono">{cfg.runtime.internal_port}</span>
               </div>
               <div className="kv">
-                <span className="k">Bind address<small>LAN exposure is intentionally not offered in this version</small></span>
+                <span className="k">{t("settings.bind")}<small>{t("settings.bind.sub")}</small></span>
                 <span className="v mono">127.0.0.1</span>
               </div>
               <div className="kv">
-                <span className="k">Log level</span>
+                <span className="k">{t("settings.log_level")}</span>
                 <span className="v">
                   <select value={cfg.logging.level}
                           onChange={(e) => patch({ logging: { level: e.target.value } })}>
@@ -190,7 +256,7 @@ export default function Settings() {
                 </span>
               </div>
               <div className="kv">
-                <span className="k">Swap warning threshold</span>
+                <span className="k">{t("settings.swap")}</span>
                 <span className="v">
                   <select value={cfg.memory.swap_warn_gb}
                           onChange={(e) => patch({ memory: { swap_warn_gb: Number(e.target.value) } })}>
@@ -199,21 +265,43 @@ export default function Settings() {
                 </span>
               </div>
               <div className="kv">
-                <span className="k">Model directories</span>
-                <span className="v mono" style={{ fontSize: 11, textAlign: "right" }}>
-                  {cfg.model_dirs.join(" · ")}
+                <span className="k">{t("models.library")}<small>{t("models.library.hint")}</small></span>
+                <span className="v" style={{ gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
+                  <input
+                    type="text"
+                    defaultValue={cfg.model_dirs[0] ?? ""}
+                    key={cfg.model_dirs[0]}
+                    onBlur={(e) => {
+                      const path = e.target.value.trim();
+                      if (path && path !== cfg.model_dirs[0]) {
+                        void api.post("/models/library", { path }).then(() => refresh()).catch((err) => {
+                          setErr(err instanceof Error ? err.message : String(err));
+                        });
+                      }
+                    }}
+                    style={{ minWidth: 220 }}
+                    aria-label={t("models.library")}
+                  />
                 </span>
               </div>
+              {cfg.model_dirs.slice(1).length > 0 && (
+                <div className="kv">
+                  <span className="k">{t("settings.model_dirs")}</span>
+                  <span className="v mono" style={{ fontSize: 11, textAlign: "right" }}>
+                    {cfg.model_dirs.slice(1).join(" · ")}
+                  </span>
+                </div>
+              )}
             </>
           )}
         </div>
       </Section>
 
-      <Section title="About">
+      <Section title={t("settings.about")}>
         <div className="card" style={{ padding: "6px 20px" }}>
-          <div className="kv"><span className="k">Local AI Control Center</span><span className="v">v0.1.0</span></div>
-          <div className="kv"><span className="k">Engine (Fast Mode)</span><span className="v mono">dflash-mlx</span></div>
-          <div className="kv"><span className="k">Engine (Safe Mode)</span><span className="v mono">mlx-lm</span></div>
+          <div className="kv"><span className="k">{t("app.name")}</span><span className="v">v0.3.5</span></div>
+          <div className="kv"><span className="k">{t("settings.engine.fast")}</span><span className="v mono">dflash-mlx</span></div>
+          <div className="kv"><span className="k">{t("settings.engine.safe")}</span><span className="v mono">mlx-lm</span></div>
         </div>
       </Section>
     </>

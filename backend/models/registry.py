@@ -8,6 +8,7 @@ can see their full local inventory.
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,101 @@ from backend.database.db import db
 
 # Directories that are HF hub caches store snapshots under models--org--name/snapshots/<rev>/
 _HF_PREFIX = "models--"
+_INCOMPLETE_MARKER = ".download-incomplete"
+
+
+def is_hf_hub_cache(path: Path) -> bool:
+    """True for ~/.cache/huggingface/hub — scan-only, never the install library."""
+    parts = [p.lower() for p in path.parts]
+    return path.name == "hub" and "huggingface" in parts
+
+
+def parse_repo_id(repo_id: str) -> tuple[str, str]:
+    """Hugging Face / LM Studio id: org/name. Reject path traversal."""
+    raw = (repo_id or "").strip().strip("/")
+    if raw.count("/") != 1:
+        raise ValueError("repo id must be org/name")
+    org, name = raw.split("/", 1)
+    if not org or not name or ".." in org or ".." in name:
+        raise ValueError("invalid repo id")
+    if "/" in name or org.startswith(".") or name.startswith("."):
+        raise ValueError("invalid repo id")
+    return org, name
+
+
+def library_dir(cfg: dict[str, Any] | None = None) -> Path:
+    """Primary library: first configured dir that is not the HF hub cache.
+
+    Downloads land here as {org}/{name}, matching LM Studio.
+    Changing it is an explicit Settings action — never inferred.
+    """
+    cfg = cfg or load_config()
+    for base in expand_model_dirs(cfg):
+        if not is_hf_hub_cache(base):
+            return base
+    return Path.home() / ".lmstudio" / "models"
+
+
+def library_model_path(repo_id: str, cfg: dict[str, Any] | None = None) -> Path:
+    org, name = parse_repo_id(repo_id)
+    return library_dir(cfg) / org / name
+
+
+def store_library_path(path: Path) -> str:
+    """Prefer ~/… in yaml so the file stays portable across this Mac."""
+    resolved = path.expanduser().resolve()
+    home = Path.home()
+    try:
+        return "~/" + str(resolved.relative_to(home))
+    except ValueError:
+        return str(resolved)
+
+
+def set_library_dir(path: str) -> dict[str, Any]:
+    """Replace the primary library folder. Extra scan dirs (HF hub) are kept."""
+    chosen = Path(os.path.expanduser(path)).resolve()
+    if not chosen.is_dir():
+        raise ValueError(f"directory does not exist: {chosen}")
+    if is_hf_hub_cache(chosen):
+        raise ValueError(
+            "Hugging Face hub cache is scan-only. Pick an LM Studio-style folder "
+            "(org/model subfolders), e.g. ~/.lmstudio/models"
+        )
+    cfg = load_config()
+    extras: list[str] = []
+    replaced = False
+    for raw in cfg.get("model_dirs") or []:
+        expanded = Path(os.path.expanduser(raw)).resolve()
+        if is_hf_hub_cache(Path(os.path.expanduser(raw))):
+            extras.append(raw)
+            continue
+        if not replaced:
+            replaced = True  # drop previous library
+            continue
+        if expanded != chosen:
+            extras.append(raw)
+    stored = store_library_path(chosen)
+    new_dirs = [stored, *extras]
+    from backend.core.config import update_config
+    update_config({"model_dirs": new_dirs})
+    return {"ok": True, "library": stored, "model_dirs": new_dirs}
+
+
+def library_status(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
+    cfg = cfg or load_config()
+    lib = library_dir(cfg)
+    extras = [
+        str(p) for p in expand_model_dirs(cfg)
+        if p.resolve() != lib.resolve()
+    ]
+    return {
+        "library": store_library_path(lib),
+        "library_resolved": str(lib.expanduser().resolve()),
+        "exists": lib.exists(),
+        "layout": "lmstudio",
+        "extras": extras,
+        "model_dirs": list(cfg.get("model_dirs") or []),
+    }
 
 
 def _dir_size_bytes(p: Path) -> int:
@@ -31,7 +127,13 @@ def _dir_size_bytes(p: Path) -> int:
 
 
 def _is_incomplete(p: Path) -> bool:
-    return any(p.glob("*.part")) or any(p.glob("*.incomplete"))
+    if (p / _INCOMPLETE_MARKER).exists():
+        return True
+    for f in p.rglob("*.part"):
+        if ".cache" in f.parts:
+            continue
+        return True
+    return False
 
 
 def _parse_model_dir(path: Path, repo_hint: str) -> dict[str, Any] | None:
@@ -57,7 +159,15 @@ def _parse_model_dir(path: Path, repo_hint: str) -> dict[str, Any] | None:
         quant_str = f"{quant['bits']}-bit (gs{quant.get('group_size', '?')})"
     dtype = cfg.get("dtype") or cfg.get("torch_dtype")
 
-    is_dflash_draft = "DFlashDraftModel" in archs or "dflash" in repo_hint.lower()
+    is_dflash2 = (
+        "dflash2" in repo_hint.lower()
+        or any("dflash2" in str(a).lower() for a in archs)
+    )
+    is_dflash_draft = (
+        "DFlashDraftModel" in archs
+        or "dflash" in repo_hint.lower()
+        or is_dflash2
+    )
     size_bytes = _dir_size_bytes(path)
 
     # MLX-quantized safetensors or bf16 safetensors both load under mlx-lm as
@@ -90,7 +200,8 @@ def _parse_model_dir(path: Path, repo_hint: str) -> dict[str, Any] | None:
         "extra": json.dumps({
             "model_type": model_type,
             "is_dflash_draft": is_dflash_draft,
-            "block_size": cfg.get("block_size"),
+            "is_dflash2": is_dflash2,
+            "block_size": cfg.get("block_size") or (cfg.get("dflash_config") or {}).get("block_size"),
             "target_layer_ids": (cfg.get("dflash_config") or {}).get("target_layer_ids"),
         }),
     }
@@ -200,6 +311,68 @@ def set_role(model_id: str, role: str) -> None:
 
 def resolve_path(model_id: str) -> str | None:
     m = get_model(model_id)
-    if m and m.get("local_path") and Path(m["local_path"]).exists():
+    if (
+        m
+        and m.get("status") == "available"
+        and m.get("local_path")
+        and Path(m["local_path"]).exists()
+    ):
         return m["local_path"]
     return None
+
+
+def forget_model(model_id: str) -> None:
+    with db() as conn:
+        conn.execute("DELETE FROM models WHERE id=?", (model_id,))
+
+
+def discover_incomplete_repos(cfg: dict[str, Any] | None = None) -> list[str]:
+    """org/name folders in the library that still have a marker or .part files."""
+    lib = library_dir(cfg)
+    out: list[str] = []
+    if not lib.exists():
+        return out
+    for org_dir in lib.iterdir():
+        if not org_dir.is_dir() or org_dir.name.startswith("."):
+            continue
+        for model_dir in org_dir.iterdir():
+            if not model_dir.is_dir():
+                continue
+            if _is_incomplete(model_dir):
+                out.append(f"{org_dir.name}/{model_dir.name}")
+    return sorted(out)
+
+
+def is_complete_library_model(repo_id: str, cfg: dict[str, Any] | None = None) -> bool:
+    """Use current disk contents, not the registry DB or download ledger."""
+    dest = library_model_path(repo_id, cfg).expanduser().resolve()
+    return (
+        dest.is_dir()
+        and not _is_incomplete(dest)
+        and (dest / "config.json").is_file()
+        and any(dest.glob("*.safetensors"))
+    )
+
+
+def delete_library_folder(repo_id: str, cfg: dict[str, Any] | None = None) -> str:
+    """Remove org/name from the model library. Refuses paths outside the library."""
+    import shutil
+
+    dest = library_model_path(repo_id, cfg).expanduser().resolve()
+    lib = library_dir(cfg).expanduser().resolve()
+    try:
+        dest.relative_to(lib)
+    except ValueError as e:
+        raise ValueError("refusing to delete a path outside the model library") from e
+    if dest == lib:
+        raise ValueError("refusing to delete the library root")
+    if dest.exists():
+        shutil.rmtree(dest)
+    org = dest.parent
+    try:
+        if org.is_dir() and org != lib and not any(org.iterdir()):
+            org.rmdir()
+    except OSError:
+        pass
+    forget_model(repo_id)
+    return str(dest)

@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "LocalAI",
+    defaultLocalization: "en",
     platforms: [.macOS(.v15)],
     products: [
         .executable(name: "LocalAI", targets: ["LocalAI"])

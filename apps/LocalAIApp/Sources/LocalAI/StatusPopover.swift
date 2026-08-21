@@ -2,36 +2,39 @@ import SwiftUI
 
 struct StatusPopover: View {
     @EnvironmentObject var store: AppStore
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.dynamicTypeSize) private var typeSize
     var onOpenConsole: () -> Void
-    var onQuit: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: Space.md) {
             header
-            if let err = store.lastError, !store.backendReachable {
-                ErrorBanner(title: "Control plane is not running", detail: err) {
-                    store.startControlPlane()
+            if !store.backendReachable {
+                firstRun
+            } else {
+                if let err = store.lastError {
+                    ErrorBanner(title: L10n.t("popover.generic_error"), detail: err)
                 }
-            } else if let err = store.lastError {
-                ErrorBanner(title: "Something went wrong", detail: err)
-            }
-            if let adv = store.runtime.advisory {
-                AdvisoryBanner(advisory: adv)
-            }
-            if store.backendReachable {
+                if let notice = store.statusNotice {
+                    AdvisoryBanner(advisory: notice)
+                }
+                if let adv = store.runtime.advisory {
+                    AdvisoryBanner(advisory: adv)
+                }
                 metrics
                 controls
                 modePicker
-            } else {
-                Button("Start Control Plane") { store.startControlPlane() }
-                    .keyboardShortcut("k", modifiers: [.command])
-                    .disabled(store.isActing)
             }
             Divider()
             footer
         }
-        .padding(16)
-        .frame(width: 340)
+        .padding(Space.lg)
+        .frame(width: typeSize.isAccessibilitySize ? 380 : 320)
+        .background {
+            if reduceTransparency {
+                Color(nsColor: .windowBackgroundColor)
+            }
+        }
         .onAppear {
             store.popoverVisible = true
             Task { await store.tick(); await store.refreshConfig() }
@@ -40,56 +43,71 @@ struct StatusPopover: View {
     }
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 10) {
-            StatusDot(life: store.backendReachable ? store.runtime.status : .error,
-                      healthy: store.runtime.httpHealthy)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Local AI Runtime")
-                    .font(.headline)
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-            }
-            Spacer()
+        VStack(alignment: .leading, spacing: Space.xs) {
+            Text(L10n.t("popover.title"))
+                .font(TypeScale.section)
+            StatusLine(
+                life: store.backendReachable ? store.runtime.status : .error,
+                healthy: store.runtime.httpHealthy,
+                extra: subtitleExtra
+            )
         }
         .accessibilityElement(children: .combine)
     }
 
-    private var subtitle: String {
-        if !store.backendReachable { return "Control plane unreachable" }
-        if store.isActing { return "\(store.busyAction?.capitalized ?? "Working")…" }
-        let life = store.runtime.status.rawValue
-        let model = store.runtime.targetModel?.split(separator: "/").last.map(String.init)
-        if let model, store.running {
-            return "\(life) · \(model)"
+    private var subtitleExtra: String? {
+        if !store.backendReachable { return L10n.t("status.control_down") }
+        if store.isActing { return L10n.t("status.working") }
+        return store.runtime.targetModel?.split(separator: "/").last.map(String.init)
+    }
+
+    private var firstRun: some View {
+        VStack(alignment: .leading, spacing: Space.md) {
+            EmptyState(
+                title: L10n.t("popover.first_run.title"),
+                bodyText: L10n.t("popover.first_run.body"),
+                actionTitle: store.isActing ? nil : L10n.t("popover.start_control"),
+                action: store.isActing ? nil : { store.startControlPlane() }
+            )
+            if store.isActing {
+                ProgressView().controlSize(.small)
+                    .accessibilityLabel(L10n.t("status.working"))
+            }
+            if let err = store.lastError {
+                ErrorBanner(title: L10n.t("popover.control_error"), detail: err) {
+                    store.startControlPlane()
+                }
+            }
         }
-        return life
     }
 
     private var metrics: some View {
         let rm = store.latestSample?.runtime
-        return HStack(alignment: .top, spacing: 8) {
-            StatCell(label: "Memory", value: Formatters.num(store.latestSample?.memUsedGb), unit: "GB")
-            StatCell(label: "Speed", value: Formatters.num(rm?.decodeTokS), unit: "tok/s")
-            StatCell(label: "Accept", value: store.runtime.mode == .fast ? Formatters.pct(rm?.acceptanceRate) : "—")
+        return HStack(alignment: .top, spacing: Space.sm) {
+            StatCell(label: L10n.t("popover.memory"), value: Formatters.num(store.latestSample?.memUsedGb), unit: L10n.t("popover.unit.gb"))
+            StatCell(label: L10n.t("popover.speed"), value: Formatters.num(rm?.decodeTokS), unit: L10n.t("popover.unit.toks"))
+            StatCell(
+                label: L10n.t("popover.accept"),
+                value: store.runtime.mode == .fast ? Formatters.pct(rm?.acceptanceRate) : L10n.t("emdash")
+            )
         }
     }
 
     private var controls: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: Space.sm) {
             if store.running {
-                Button("Restart") { store.restartRuntime() }
+                Button(L10n.t("popover.stop")) { store.stopRuntime() }
                     .disabled(store.isActing)
-                Button("Stop", role: .destructive) { store.stopRuntime() }
-                    .disabled(store.isActing)
+                    .accessibilityHint(L10n.t("menu.stop.hint"))
             } else {
-                Button("Start") { store.startRuntime() }
+                Button(L10n.t("popover.start")) { store.startRuntime() }
                     .keyboardShortcut(.defaultAction)
                     .disabled(store.isActing || !store.backendReachable)
+                    .accessibilityHint(L10n.t("menu.start.hint"))
             }
             if store.isActing {
                 ProgressView().controlSize(.small)
+                    .accessibilityLabel(L10n.t("status.working"))
             }
             Spacer()
         }
@@ -97,33 +115,29 @@ struct StatusPopover: View {
     }
 
     private var modePicker: some View {
-        Picker("Mode", selection: Binding(
+        Picker(L10n.t("runtime.mode"), selection: Binding(
             get: { store.runtime.mode },
             set: { store.setMode($0) }
         )) {
             ForEach(RuntimeMode.allCases) { mode in
-                Text(mode.title).tag(mode)
+                Text(mode.localizedTitle).tag(mode)
             }
         }
         .pickerStyle(.segmented)
         .disabled(store.isActing || !store.backendReachable)
-        .accessibilityLabel("Runtime mode")
-        .help("Fast uses DFlash speculative decoding. Safe is target-only.")
+        .accessibilityLabel(L10n.t("runtime.mode"))
+        .accessibilityHint(L10n.t("mode.help"))
+        .help(L10n.t("mode.help"))
     }
 
     private var footer: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Button("Copy API Config") { store.copyAPIConfig() }
-                Button("Dashboard") { store.openDashboard() }
-            }
-            HStack {
-                Button("Open Console…") { onOpenConsole() }
-                    .keyboardShortcut("l", modifiers: [.command])
-                Spacer()
-                Button("Quit Local AI") { onQuit() }
-                    .keyboardShortcut("q")
-            }
+        HStack {
+            Button(L10n.t("popover.copy")) { store.copyAPIConfig() }
+                .accessibilityHint(L10n.t("popover.copy.hint"))
+            Spacer()
+            Button(L10n.t("popover.console")) { onOpenConsole() }
+                .keyboardShortcut("l", modifiers: [.command])
+                .accessibilityHint(L10n.t("help.job.console.body"))
         }
         .controlSize(.small)
     }

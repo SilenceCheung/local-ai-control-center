@@ -24,11 +24,15 @@ class RuntimeState:
     pid: int | None = None
     internal_host: str = "127.0.0.1"
     internal_port: int = 18080
-    alias: str = "qwen3.8-27b-local"
+    alias: str = "Qwen3.8-27B-Heretic-8bit"
     target_model: str | None = None
     target_path: str | None = None
     draft_model: str | None = None
     draft_path: str | None = None
+    # Immutable, privacy-safe snapshot of the arguments that were effective
+    # when this process was launched.  Disk configuration may change while a
+    # model remains loaded, so the UI must not present saved values as live.
+    launch_config: dict[str, Any] | None = None
     started_at: float | None = None
     updated_at: float = field(default_factory=time.time)
     error: str | None = None

@@ -36,6 +36,22 @@ def _resolve_prompt(prompt_key: str) -> tuple[str, int]:
     return spec["prompt"], spec["max_tokens"]
 
 
+def autotune_candidates(generation: str) -> list[dict[str, Any]]:
+    """Tune within the trained verification width of the active draft."""
+    if generation == "dflash2":
+        return [
+            {"verify_mode": "adaptive", "verify_len_cap": 0, "label": "adaptive (default)"},
+            {"verify_mode": "dflash", "verify_len_cap": 0, "label": "fixed verify, full block"},
+            {"verify_mode": "dflash", "verify_len_cap": 4, "label": "fixed verify, cap 4"},
+        ]
+    return [
+        {"verify_mode": "adaptive", "verify_len_cap": 0, "label": "adaptive (default)"},
+        {"verify_mode": "dflash", "verify_len_cap": 0, "label": "fixed verify, full block"},
+        {"verify_mode": "dflash", "verify_len_cap": 8, "label": "fixed verify, cap 8"},
+        {"verify_mode": "dflash", "verify_len_cap": 4, "label": "fixed verify, cap 4"},
+    ]
+
+
 async def measure_generation(prompt: str, max_tokens: int) -> dict[str, Any]:
     """One streamed request via the gateway; returns real measured numbers."""
     cfg = load_config()
@@ -289,13 +305,11 @@ class BenchmarkJobManager:
         """
         from backend.runtime.manager import runtime_manager
         prompt, max_tokens = _resolve_prompt("coding_long")
-        candidates = [
-            {"verify_mode": "adaptive", "verify_len_cap": 0, "label": "adaptive (default)"},
-            {"verify_mode": "dflash", "verify_len_cap": 0, "label": "fixed verify, full block"},
-            {"verify_mode": "dflash", "verify_len_cap": 8, "label": "fixed verify, cap 8"},
-            {"verify_mode": "dflash", "verify_len_cap": 4, "label": "fixed verify, cap 4"},
-        ]
-        original = load_config()["dflash"]
+        from backend.runtime.recipes import describe
+        original_cfg = load_config()
+        generation = describe(original_cfg)["generation"]
+        candidates = autotune_candidates(generation)
+        original = original_cfg["dflash"]
         results = []
         try:
             for cand in candidates:
@@ -317,7 +331,8 @@ class BenchmarkJobManager:
 
         valid = [r for r in results if r.get("ok") and r.get("tok_s")]
         best = max(valid, key=lambda r: r["tok_s"]) if valid else None
-        out = {"ok": bool(best), "candidates": results, "recommended": best}
+        out = {"ok": bool(best), "generation": generation,
+               "candidates": results, "recommended": best}
         if best:
             out["recommendation_text"] = (
                 f"Recommended: {best['label']} — {best['tok_s']} tok/s"

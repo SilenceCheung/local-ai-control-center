@@ -21,6 +21,7 @@ DATA_DIR = PROJECT_ROOT / "data"
 LOGS_DIR = PROJECT_ROOT / "logs"
 STATE_PATH = DATA_DIR / "runtime_state.json"
 GATEWAY_STATS_PATH = DATA_DIR / "gateway_stats.json"
+DOWNLOADS_PATH = DATA_DIR / "downloads.json"
 DB_PATH = DATA_DIR / "lacc.db"
 
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -28,7 +29,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "host": "127.0.0.1",
         "port": 8080,
         "api_key": "local",
-        "alias": "qwen3.8-27b-local",
+        "alias": "Qwen3.8-27B-Heretic-8bit",
+        "alias_auto": True,
+        "alias_source": "McG-221/Qwen3.8-27B-heretic-ara-mlx-8Bit",
     },
     "dashboard": {
         "host": "127.0.0.1",
@@ -48,17 +51,56 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "dflash": {
         "enabled": True,
-        # Real dflash-mlx knobs. The draft checkpoint's block size (16) is
-        # fixed at training time and is NOT configurable at runtime.
+        # Real dflash-mlx knobs. Heretic draft block size (16) is trained-fixed.
+        # Official DFlash 2 stores runtime_block_size as recipe intent; only
+        # forwarded to CLI when `dflash serve` advertises --block-size.
         "verify_mode": "adaptive",  # adaptive | dflash | ddtree
         "verify_len_cap": 0,  # 0 = runtime default
         "draft_quant": "default",  # default | none | w4:gs64 ...
         "fastpath_max_tokens": 0,
         "prefix_cache": True,
+        "prefill_step_size": 2048,
+        "draft_sink_size": 64,
+        "draft_window_size": 1024,
+        "prefix_cache_l2": True,
+        "prefix_cache_max_entries": 4,
+        "prefix_cache_max_bytes": "8GB",
+        "prefix_cache_l2_max_bytes": "50GB",
+        "cache_limit": "4GB",
+        "runtime_block_size": 0,
+        "draft_bits": 0,
+        "reasoning": "default",  # default | low | medium | xhigh
+    },
+    "recipes": {
+        "active": "heretic",  # heretic | official_dflash2
+        "heretic": {
+            "target_model": "McG-221/Qwen3.8-27B-heretic-ara-mlx-8Bit",
+            "draft_model": "jfan/Qwen3.8-27B-heretic-dflash",
+            "dflash": {
+                "verify_mode": "adaptive",
+                "verify_len_cap": 0,
+                "draft_quant": "default",
+                "runtime_block_size": 0,
+                "draft_bits": 0,
+                "reasoning": "default",
+            },
+        },
+        "official_dflash2": {
+            "target_model": "mlx-community/Qwen3.8-27B-4bit",
+            "draft_model": "z-lab/Qwen3.8-27B-DFlash2",
+            "dflash": {
+                "verify_mode": "adaptive",
+                "verify_len_cap": 0,
+                "draft_quant": "w4:gs64",
+                "runtime_block_size": 0,
+                "draft_bits": 4,
+                "reasoning": "xhigh",
+            },
+        },
     },
     "model_dirs": [
-        "~/.lmstudio/models",
-        "~/.cache/huggingface/hub",
+        "~/.lmstudio/models",  # primary library (LM Studio org/name). Downloads land here.
+        "~/.cache/huggingface/hub",  # extra scan-only
     ],
     "logging": {"level": "INFO"},
     "memory": {
@@ -106,6 +148,9 @@ def update_config(patch: dict[str, Any]) -> dict[str, Any]:
     """Deep-merge a patch into the persisted config and return the result."""
     cfg = load_config()
     merged = _deep_merge(cfg, patch)
+    if "runtime" in patch or "dflash" in patch:
+        from backend.runtime.recipes import sync_active_from_runtime
+        merged = sync_active_from_runtime(merged)
     save_config(merged)
     return merged
 

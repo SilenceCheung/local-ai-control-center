@@ -1,6 +1,7 @@
 import { api, type AppConfig, type RuntimeStatus } from "../api/client";
 import { usePoll } from "../hooks/usePoll";
-import { Badge, CopyField, Section, Stat, StatusDot, fmtTime } from "../components/ui";
+import { Badge, CopyField, AliasField, Section, Stat, StatusDot, fmtTime } from "../components/ui";
+import { useI18n } from "../i18n";
 
 interface GatewayStats {
   ok: boolean; live: boolean;
@@ -12,7 +13,8 @@ interface GatewayStats {
 }
 
 export default function ApiPage() {
-  const { data: cfg } = usePoll<AppConfig>(() => api.get("/settings"), 30000);
+  const { t } = useI18n();
+  const { data: cfg, refresh: refreshCfg } = usePoll<AppConfig>(() => api.get("/settings"), 30000);
   const { data: rt } = usePoll<RuntimeStatus>(() => api.get("/runtime/status"), 6000);
   const { data: gw } = usePoll<GatewayStats>(() => api.get("/gateway/stats"), 6000);
 
@@ -21,69 +23,81 @@ export default function ApiPage() {
 
   return (
     <>
-      <h1 className="page-title">API</h1>
-      <p className="page-sub">OpenAI-compatible inference endpoint — stable across runtime restarts and mode switches</p>
+      <h1 className="page-title">{t("nav.api")}</h1>
+      <p className="page-sub">{t("api.sub")}</p>
 
-      <Section title="Connection">
+      <Section title={t("api.connection")}>
         <div className="grid" style={{ gridTemplateColumns: "1fr", gap: 8 }}>
-          <CopyField label="Base URL" value={base} />
-          <CopyField label="API Key" value={cfg?.api.api_key ?? "local"} />
-          <CopyField label="Model" value={cfg?.api.alias ?? "qwen3.8-27b-local"} />
+          <CopyField label={t("api.base")} value={base} />
+          <CopyField label={t("api.key")} value={cfg?.api.api_key ?? "local"} />
+          <AliasField
+            alias={cfg?.api.alias ?? "Qwen3.8-27B-Heretic-8bit"}
+            aliasAuto={cfg?.api.alias_auto ?? true}
+            label={t("api.model")}
+            onSave={async (name) => {
+              await api.put("/settings", { api: { alias: name, alias_auto: false } });
+              void refreshCfg();
+            }}
+            onReset={async () => {
+              await api.put("/settings", { api: { alias_auto: true } });
+              void refreshCfg();
+            }}
+          />
         </div>
         <p style={{ color: "var(--text-3)", fontSize: 11.5, marginTop: 8 }}>
-          The endpoint listens on 127.0.0.1 only. The API key is accepted as-is for local clients that require one.
+          {t("api.listen")}
         </p>
       </Section>
 
-      <Section title="Server Status">
+      <Section title={t("api.server")}>
         <div className="card">
           <div className="row" style={{ gap: 10, marginBottom: 16 }}>
             <StatusDot kind={gw?.live ? (rt?.http_healthy ? "ok" : "warn") : "err"} />
             <span style={{ fontWeight: 600 }}>
-              Gateway {gw?.live ? "running" : "not responding"}
+              {gw?.live ? t("api.gw.running") : t("api.gw.down")}
             </span>
             {gw?.live && (rt?.http_healthy
-              ? <Badge kind="ok">runtime reachable</Badge>
-              : <Badge kind="warn">runtime {rt?.status ?? "stopped"}</Badge>)}
+              ? <Badge kind="ok">{t("api.rt.ok")}</Badge>
+              : <Badge kind="warn">{t("api.rt.status", { s: rt?.status ?? "stopped" })}</Badge>)}
           </div>
           <div className="grid" style={{ gridTemplateColumns: "repeat(4, 1fr)" }}>
-            <Stat label="Requests" value={s?.requests_total ?? "—"} />
-            <Stat label="Active" value={s?.requests_active ?? "—"} />
-            <Stat label="Tokens Generated" value={s ? s.tokens_generated.toLocaleString() : "—"}
-                  hint="Approximate: counted from streamed chunks and usage fields" />
-            <Stat label="Errors" value={s?.errors_total ?? "—"} />
+            <Stat label={t("api.requests")} value={s?.requests_total ?? t("common.emdash")} />
+            <Stat label={t("api.active")} value={s?.requests_active ?? t("common.emdash")} />
+            <Stat label={t("api.tokens")} value={s ? s.tokens_generated.toLocaleString() : t("common.emdash")}
+                  hint={t("api.tokens.hint")} />
+            <Stat label={t("api.errors")} value={s?.errors_total ?? t("common.emdash")} />
           </div>
           <p style={{ color: "var(--text-3)", fontSize: 11.5, marginTop: 14 }}>
-            Last request: {fmtTime(s?.last_request_at)}
+            {t("api.last", { t: fmtTime(s?.last_request_at) })}
           </p>
         </div>
       </Section>
 
-      <Section title="Endpoints">
+      <Section title={t("api.endpoints")}>
         <div className="card" style={{ padding: "6px 20px" }}>
           <div className="kv"><span className="k mono">GET /v1/models</span>
-            <span className="v"><Badge kind="ok">supported</Badge></span></div>
+            <span className="v"><Badge kind="ok">{t("api.supported")}</Badge></span></div>
           <div className="kv"><span className="k mono">POST /v1/chat/completions</span>
-            <span className="v"><Badge kind="ok">supported · streaming · tool calls</Badge></span></div>
+            <span className="v"><Badge kind="ok">{t("api.supported.stream")}</Badge></span></div>
           <div className="kv">
             <span className="k mono">POST /v1/responses
-              <small>Minimal non-streaming adapter in Fast Mode (dflash-mlx); not implemented by mlx-lm in Safe Mode</small>
+              <small>{t("api.responses.sub")}</small>
             </span>
             <span className="v">{rt?.mode === "fast"
-              ? <Badge kind="warn">partial (Fast Mode only)</Badge>
-              : <Badge kind="idle">not supported in Safe Mode</Badge>}</span>
+              ? <Badge kind="warn">{t("api.partial")}</Badge>
+              : <Badge kind="idle">{t("api.not_safe")}</Badge>}</span>
           </div>
           <div className="kv"><span className="k mono">POST /v1/completions</span>
-            <span className="v"><Badge kind="warn">depends on engine</Badge></span></div>
+            <span className="v"><Badge kind="warn">{t("api.depends")}</Badge></span></div>
         </div>
       </Section>
 
-      <Section title="Quick Test">
+      <Section title={t("api.curl")}>
         <div className="card">
           <code style={{ whiteSpace: "pre-wrap", display: "block", fontSize: 11.5, lineHeight: 1.7 }}>
 {`curl ${base}/chat/completions \\
   -H "Content-Type: application/json" \\
-  -d '{"model": "${cfg?.api.alias ?? "qwen3.8-27b-local"}", "messages": [{"role": "user", "content": "Hello"}], "max_tokens": 100, "stream": true}'`}
+  -d '{"model": "${cfg?.api.alias ?? "Qwen3.8-27B-Heretic-8bit"}", "messages": [{"role": "user", "content": "Hello"}], "max_tokens": 100, "stream": true}'`}
           </code>
         </div>
       </Section>

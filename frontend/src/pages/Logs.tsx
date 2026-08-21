@@ -1,17 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { Toggle } from "../components/ui";
+import { useI18n } from "../i18n";
 
 interface LogData { ok: boolean; lines: string[]; path?: string; error?: string; total_lines?: number }
 
-const CATEGORIES = [
-  { id: "runtime", label: "Runtime" },
-  { id: "api", label: "API" },
-  { id: "backend", label: "Backend" },
-  { id: "benchmark", label: "Benchmark" },
-];
-
 export default function Logs() {
+  const { t } = useI18n();
   const [category, setCategory] = useState("runtime");
   const [query, setQuery] = useState("");
   const [errorsOnly, setErrorsOnly] = useState(false);
@@ -19,6 +14,13 @@ export default function Logs() {
   const [autoScroll, setAutoScroll] = useState(true);
   const [data, setData] = useState<LogData | null>(null);
   const viewRef = useRef<HTMLDivElement>(null);
+  const categories = [
+    { id: "runtime", label: t("logs.cat.runtime") },
+    { id: "api", label: t("logs.cat.api") },
+    { id: "backend", label: t("logs.cat.backend") },
+    { id: "benchmark", label: t("logs.cat.benchmark") },
+  ];
+  const downMsg = t("logs.down");
 
   useEffect(() => {
     let stop = false;
@@ -29,13 +31,13 @@ export default function Logs() {
           `&errors_only=${errorsOnly}&important_only=${importantOnly}`);
         if (!stop) setData(d);
       } catch {
-        if (!stop) setData({ ok: false, lines: [], error: "backend unreachable" });
+        if (!stop) setData({ ok: false, lines: [], error: downMsg });
       }
     };
     void load();
-    const t = setInterval(() => { if (!document.hidden) void load(); }, 4000);
-    return () => { stop = true; clearInterval(t); };
-  }, [category, query, errorsOnly, importantOnly]);
+    const tick = setInterval(() => { if (!document.hidden) void load(); }, 4000);
+    return () => { stop = true; clearInterval(tick); };
+  }, [category, query, errorsOnly, importantOnly, downMsg]);
 
   useEffect(() => {
     if (autoScroll && viewRef.current) {
@@ -49,26 +51,26 @@ export default function Logs() {
 
   return (
     <>
-      <h1 className="page-title">Logs</h1>
-      <p className="page-sub">Noise-filtered by default — warnings, errors, restarts, model loads and benchmarks first</p>
+      <h1 className="page-title">{t("nav.logs")}</h1>
+      <p className="page-sub">{t("logs.sub")}</p>
 
       <div className="row" style={{ marginBottom: 14, flexWrap: "wrap", gap: 10 }}>
-        <select value={category} onChange={(e) => setCategory(e.target.value)} aria-label="Log category">
-          {CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+        <select value={category} onChange={(e) => setCategory(e.target.value)} aria-label={t("logs.cat.runtime")}>
+          {categories.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
         </select>
-        <input type="text" placeholder="Search…" value={query}
-               onChange={(e) => setQuery(e.target.value)} style={{ width: 200 }} aria-label="Search logs" />
+        <input type="text" placeholder={t("logs.search")} value={query}
+               onChange={(e) => setQuery(e.target.value)} style={{ width: 200 }} aria-label={t("logs.search")} />
         <label className="row" style={{ gap: 6, fontSize: 12, color: "var(--text-2)" }}>
-          <Toggle checked={errorsOnly} onChange={setErrorsOnly} label="Errors only" /> Errors only
+          <Toggle checked={errorsOnly} onChange={setErrorsOnly} label={t("logs.errors")} /> {t("logs.errors")}
         </label>
         <label className="row" style={{ gap: 6, fontSize: 12, color: "var(--text-2)" }}>
-          <Toggle checked={importantOnly} onChange={(v) => setImportantOnly(v)} label="Important only" /> Important only
+          <Toggle checked={importantOnly} onChange={(v) => setImportantOnly(v)} label={t("logs.important")} /> {t("logs.important")}
         </label>
         <label className="row" style={{ gap: 6, fontSize: 12, color: "var(--text-2)" }}>
-          <Toggle checked={autoScroll} onChange={setAutoScroll} label="Auto scroll" /> Auto scroll
+          <Toggle checked={autoScroll} onChange={setAutoScroll} label={t("logs.autoscroll")} /> {t("logs.autoscroll")}
         </label>
         <button className="btn small" onClick={() => navigator.clipboard.writeText((data?.lines ?? []).join("\n"))}>
-          Copy
+          {t("common.copy")}
         </button>
       </div>
 
@@ -78,13 +80,13 @@ export default function Logs() {
         ))}
         {data && data.lines.length === 0 && (
           <div style={{ color: "var(--text-3)" }}>
-            {data.error ?? "No matching log lines."}
+            {data.error ?? t("logs.empty")}
           </div>
         )}
       </div>
       {data?.path && (
         <p style={{ color: "var(--text-3)", fontSize: 11, marginTop: 8 }} className="mono">
-          {data.path} · {data.total_lines ?? 0} lines total
+          {t("logs.meta", { path: data.path, n: data.total_lines ?? 0 })}
         </p>
       )}
     </>

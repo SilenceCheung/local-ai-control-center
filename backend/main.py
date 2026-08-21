@@ -35,7 +35,9 @@ async def lifespan(app: FastAPI):
     await asyncio.to_thread(scan_models)
     await runtime_manager.on_boot()
     sampler.start()
+    from backend.core.alias import sync_alias_for_target
     cfg = load_config()
+    sync_alias_for_target(str((cfg.get("runtime") or {}).get("target_model") or ""))
     log.info("Local AI Control Center backend up — dashboard http://%s:%s",
              cfg["dashboard"]["host"], cfg["dashboard"]["port"])
     yield

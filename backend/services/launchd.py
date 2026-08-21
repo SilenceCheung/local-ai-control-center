@@ -7,6 +7,11 @@ Two services:
 The heavy model runtime is NOT a login item by default: the backend starts it
 on demand (or automatically when runtime.auto_load is true), so logging in
 never silently pins 30 GB of unified memory.
+
+RunAtLoad is False: Local AI.app (or `local-ai start`) brings the control plane
+up. A clean Quit from the app bootouts these jobs so ports 8787/8080 do not
+stay occupied. KeepAlive only restarts a crash while the job is loaded.
+
 """
 
 from __future__ import annotations
@@ -42,8 +47,8 @@ def plist_content(service: str) -> dict[str, Any]:
         "Label": spec["label"],
         "ProgramArguments": spec["args"],
         "WorkingDirectory": str(PROJECT_ROOT),
-        "RunAtLoad": True,
-        "KeepAlive": {"SuccessfulExit": False},
+        "RunAtLoad": False,  # App owns the session. Login starts Local AI.app, not a headless 8787.
+        "KeepAlive": {"SuccessfulExit": False},  # crash recovery only while the job is loaded
         "StandardOutPath": str(LOGS_DIR / spec["log"]),
         "StandardErrorPath": str(LOGS_DIR / spec["log"]),
         "EnvironmentVariables": {"PYTHONUNBUFFERED": "1"},

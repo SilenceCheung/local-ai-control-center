@@ -19,8 +19,11 @@ from backend.core.config import GATEWAY_STATS_PATH, load_config, update_config
 from backend.core.state import read_state
 from backend.database.db import benchmark_history, recent_events
 from backend.integrations import agents as agents_mod
+from backend.models import hub as hub_mod
+from backend.models import pull as pull_mod
 from backend.models import registry
 from backend.monitoring.sampler import sampler
+from backend.runtime import recipes as recipes_mod
 from backend.runtime.manager import runtime_manager
 from backend.services import launchd, logs as logs_mod
 
@@ -108,6 +111,25 @@ class RoleBody(BaseModel):
     role: str
 
 
+class PullBody(BaseModel):
+    repo_id: str
+    assign_role: str | None = None
+
+
+class PullCtrlBody(BaseModel):
+    repo_id: str | None = None
+
+
+class DeleteModelBody(BaseModel):
+    model_id: str
+    confirm_model_id: str | None = None
+    scope: str | None = None
+
+
+class LibraryBody(BaseModel):
+    path: str
+
+
 @router.get("/models")
 async def models_list() -> list[dict[str, Any]]:
     return registry.list_models()
@@ -119,6 +141,135 @@ async def models_scan() -> dict[str, Any]:
     return {"ok": True, "found": len(found)}
 
 
+@router.get("/models/library")
+async def models_library() -> dict[str, Any]:
+    return registry.library_status()
+
+
+@router.post("/models/library")
+async def models_library_set(body: LibraryBody) -> dict[str, Any]:
+    try:
+        return registry.set_library_dir(body.path)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+
+
+@router.get("/models/search")
+async def models_search(q: str = "", sort: str = "downloads", limit: int = 24, format: str = "mlx") -> dict[str, Any]:
+    if format not in ("mlx", "all"):
+        raise HTTPException(422, "format must be mlx or all")
+    if sort not in ("downloads", "updated", "relevance"):
+        raise HTTPException(422, "sort must be downloads, updated, or relevance")
+    try:
+        return await asyncio.to_thread(hub_mod.search_hub, q, sort=sort, limit=limit, fmt=format)
+    except RuntimeError as e:
+        raise HTTPException(502, str(e)) from e
+
+
+@router.get("/models/hub")
+async def models_hub_card(id: str) -> dict[str, Any]:
+    try:
+        hub_mod.parse_repo_id(id)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+    try:
+        return await asyncio.to_thread(hub_mod.hub_card, id)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e)) from e
+    except Exception as e:
+        raise HTTPException(502, f"Hugging Face lookup failed: {e}") from e
+
+
+@router.post("/models/pull")
+async def models_pull(body: PullBody) -> dict[str, Any]:
+    out = pull_mod.pull_manager.start(body.repo_id, body.assign_role)
+    if not out.get("ok"):
+        raise HTTPException(422, out.get("error") or "pull failed")
+    return out
+
+
+@router.get("/models/pull")
+async def models_pull_status() -> dict[str, Any]:
+    return pull_mod.pull_manager.snapshot()
+
+
+@router.post("/models/pull/cancel")
+async def models_pull_cancel() -> dict[str, Any]:
+    return pull_mod.pull_manager.cancel()
+
+
+@router.post("/models/pull/pause")
+async def models_pull_pause(body: PullCtrlBody) -> dict[str, Any]:
+    out = pull_mod.pull_manager.pause(body.repo_id)
+    if not out.get("ok"):
+        raise HTTPException(409, out.get("error") or "pause failed")
+    return out
+
+
+@router.post("/models/pull/resume")
+async def models_pull_resume(body: PullCtrlBody) -> dict[str, Any]:
+    if not body.repo_id:
+        raise HTTPException(422, "repo_id required")
+    out = pull_mod.pull_manager.resume(body.repo_id)
+    if not out.get("ok"):
+        raise HTTPException(422, out.get("error") or "resume failed")
+    return out
+
+
+@router.post("/models/pull/dismiss")
+async def models_pull_dismiss(body: PullCtrlBody) -> dict[str, Any]:
+    if not body.repo_id:
+        raise HTTPException(422, "repo_id required")
+    out = pull_mod.pull_manager.dismiss(body.repo_id)
+    if not out.get("ok"):
+        raise HTTPException(409, out.get("error") or "dismiss failed")
+    return out
+
+
+@router.post("/models/pull/clear-partials")
+async def models_pull_clear_partials(body: PullCtrlBody) -> dict[str, Any]:
+    if not body.repo_id:
+        raise HTTPException(422, "repo_id required")
+    out = await pull_mod.pull_manager.clear_partials(body.repo_id)
+    if not out.get("ok"):
+        raise HTTPException(409, out.get("error") or "clear partials failed")
+    return out
+
+
+@router.post("/models/delete")
+async def models_delete(body: DeleteModelBody) -> dict[str, Any]:
+    if body.scope != "installed_model" or body.confirm_model_id != body.model_id:
+        raise HTTPException(
+            422,
+            "full model deletion requires scope=installed_model and an exact confirm_model_id",
+        )
+    try:
+        registry.parse_repo_id(body.model_id)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+    if not registry.is_complete_library_model(body.model_id):
+        raise HTTPException(
+            409,
+            "full deletion is allowed only for a complete installed model; "
+            "remove the download record or clear partials instead",
+        )
+    st = read_state()
+    if st.status in ("running", "starting") and body.model_id in {st.target_model, st.draft_model}:
+        raise HTTPException(
+            409,
+            "stop the runtime before deleting the loaded Target or Draft",
+        )
+    if not await pull_mod.pull_manager.pause_wait(body.model_id):
+        raise HTTPException(409, "download did not stop; model files were not deleted")
+    try:
+        dest = registry.delete_library_folder(body.model_id)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    pull_mod.pull_manager.forget(body.model_id)
+    await asyncio.to_thread(registry.scan_models)
+    return {"ok": True, "deleted": body.model_id, "dest": dest, **pull_mod.pull_manager.snapshot()}
+
+
 @router.post("/models/role")
 async def models_role(body: RoleBody) -> dict[str, Any]:
     if body.role not in ("target", "draft", "embedding", "reranker", "none"):
@@ -126,6 +277,8 @@ async def models_role(body: RoleBody) -> dict[str, Any]:
     registry.set_role(body.model_id, body.role)
     if body.role == "target":
         update_config({"runtime": {"target_model": body.model_id}})
+        from backend.core.alias import sync_alias_for_target
+        sync_alias_for_target(body.model_id)
     elif body.role == "draft":
         update_config({"runtime": {"draft_model": body.model_id}})
     st = read_state()
@@ -150,7 +303,18 @@ class DFlashSettings(BaseModel):
     draft_quant: str | None = None
     fastpath_max_tokens: int | None = None
     prefix_cache: bool | None = None
+    prefill_step_size: int | None = None
+    draft_sink_size: int | None = None
+    draft_window_size: int | None = None
+    prefix_cache_l2: bool | None = None
+    prefix_cache_max_entries: int | None = None
+    prefix_cache_max_bytes: str | None = None
+    prefix_cache_l2_max_bytes: str | None = None
+    cache_limit: str | None = None
     draft_model: str | None = None
+    runtime_block_size: int | None = None
+    draft_bits: int | None = None
+    reasoning: str | None = None
 
 
 @router.get("/dflash")
@@ -158,17 +322,25 @@ async def dflash_status() -> dict[str, Any]:
     cfg = load_config()
     st = read_state()
     metrics = await runtime_manager.provider.metrics()
+    runtime = await runtime_manager.status()
     draft = registry.get_model(cfg["runtime"]["draft_model"])
+    rec = recipes_mod.describe(cfg)
     return {
         "config": cfg["dflash"],
         "mode": cfg["runtime"]["mode"],
         "active": st.status == "running" and st.mode == "fast",
         "draft_model": cfg["runtime"]["draft_model"],
+        "target_model": cfg["runtime"]["target_model"],
         "draft_info": draft,
         "block_size_trained": (draft or {}).get("extra", {}).get("block_size"),
         "metrics": metrics,
         "fallback_count": runtime_manager._fallback_count,
         "advisory": runtime_manager._advisory,
+        "recipe_id": rec["active"],
+        "generation": rec["generation"],
+        "missing": rec["missing"],
+        "engine": rec["engine"],
+        "configuration": runtime.get("configuration"),
     }
 
 
@@ -185,9 +357,31 @@ async def dflash_update(body: DFlashSettings) -> dict[str, Any]:
         patch.setdefault("runtime", {})["mode"] = "fast" if body.enabled else "safe"
         patch.setdefault("dflash", {})["enabled"] = body.enabled
     cfg = update_config(patch)
-    st = read_state()
+    runtime = await runtime_manager.status()
+    sync = runtime.get("configuration") or {}
     return {"ok": True, "config": cfg["dflash"], "mode": cfg["runtime"]["mode"],
-            "restart_required": st.status == "running"}
+            "restart_required": bool(sync.get("restart_required"))}
+
+
+class RecipeBody(BaseModel):
+    id: str
+
+
+@router.get("/recipes")
+async def recipes_get() -> dict[str, Any]:
+    return recipes_mod.describe()
+
+
+@router.post("/recipes/activate")
+async def recipes_activate(body: RecipeBody) -> dict[str, Any]:
+    try:
+        rec = recipes_mod.activate(body.id)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from e
+    runtime = await runtime_manager.status()
+    sync = runtime.get("configuration") or {}
+    return {"ok": True, "recipes": rec,
+            "restart_required": bool(sync.get("restart_required"))}
 
 
 # ------------------------------------------------------------------ benchmark
@@ -327,6 +521,28 @@ async def gateway_stats() -> dict[str, Any]:
             return {"ok": False, "live": False, "stats": None}
 
 
+@router.post("/gateway/requests/{request_id}/cancel")
+async def gateway_request_cancel(request_id: str) -> dict[str, Any]:
+    cfg = load_config()
+    url = (
+        f"http://{cfg['api']['host']}:{cfg['api']['port']}"
+        f"/gateway/requests/{request_id}/cancel"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=3) as client:
+            response = await client.post(url)
+    except httpx.HTTPError as e:
+        raise HTTPException(503, "gateway is not responding") from e
+    try:
+        payload = response.json()
+    except ValueError as e:
+        raise HTTPException(502, "gateway returned an invalid cancel response") from e
+    if response.status_code >= 400:
+        message = payload.get("error", {}).get("message") if isinstance(payload, dict) else None
+        raise HTTPException(response.status_code, message or "request cancellation failed")
+    return payload
+
+
 # ------------------------------------------------------------------ settings
 
 @router.get("/settings")
@@ -337,11 +553,27 @@ async def settings_get() -> dict[str, Any]:
 @router.put("/settings")
 async def settings_put(patch: dict[str, Any]) -> dict[str, Any]:
     allowed_top = {"api", "dashboard", "runtime", "dflash", "model_dirs", "logging",
-                   "memory", "privacy"}
+                   "memory", "privacy", "ui", "recipes"}
     bad = set(patch) - allowed_top
     if bad:
         raise HTTPException(422, f"unknown config sections: {sorted(bad)}")
+    patch = {k: v for k, v in patch.items() if v is not None}
+    api_patch = patch.get("api") if isinstance(patch.get("api"), dict) else None
+    if api_patch is not None:
+        if api_patch.get("alias") is None:
+            api_patch.pop("alias", None)
+        elif "alias" in api_patch:
+            from backend.core.alias import sanitize_alias
+            try:
+                api_patch["alias"] = sanitize_alias(api_patch["alias"])
+            except ValueError as e:
+                raise HTTPException(422, str(e)) from e
+            if "alias_auto" not in api_patch:
+                api_patch["alias_auto"] = False
+        patch["api"] = api_patch
     cfg = update_config(patch)
+    from backend.core.alias import after_settings_patch
+    cfg = after_settings_patch(patch, cfg)
     st = read_state()
     return {"ok": True, "config": cfg, "restart_required": st.status == "running"}
 

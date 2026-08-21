@@ -24,6 +24,139 @@ SAMPLE_INTERVAL_S = 2.0
 BUFFER_LEN = 450  # 15 minutes
 
 
+def _num(v: Any) -> float | None:
+    if isinstance(v, bool) or v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    return None
+
+
+def _positive(v: Any) -> float | None:
+    n = _num(v)
+    if n is None or n <= 0:
+        return None
+    return n
+
+
+def _rate_unit(v: Any) -> float | None:
+    """Acceptance: keep 0–1 fractions; older dumps used 0–100 percent."""
+    n = _num(v)
+    if n is None:
+        return None
+    return n / 100.0 if n > 1.0 else n
+
+
+def _prefill_from_request(req: dict[str, Any] | None) -> float | None:
+    if not isinstance(req, dict):
+        return None
+    seconds = _positive(req.get("prefill_s"))
+    tokens = _num(
+        req.get("prefill_tokens_processed")
+        or req.get("prefill_tokens_total")
+        or req.get("prompt_tokens")
+    )
+    if seconds is None or tokens is None:
+        return None
+    return tokens / seconds
+
+
+def _mean(vals: list[float]) -> float | None:
+    return sum(vals) / len(vals) if vals else None
+
+
+def runtime_fields_from_dflash(data: dict[str, Any]) -> dict[str, Any]:
+    """Map dflash-mlx /metrics JSON onto the Overview runtime card.
+
+    dflash-mlx 0.1.8 keeps live decode speed on ``current_request`` and
+    ``rates.active_decode_tok_s``. ``rates.average_decode_tok_s`` stays null
+    until a request finishes, and ``recent_requests`` is empty while one is
+    in flight — that is why Overview showed em dashes during a real chat.
+    """
+    rates = data.get("rates") if isinstance(data.get("rates"), dict) else {}
+    memory = data.get("memory") if isinstance(data.get("memory"), dict) else {}
+    totals = data.get("totals") if isinstance(data.get("totals"), dict) else {}
+    cur = data.get("current_request") if isinstance(data.get("current_request"), dict) else {}
+    last = data.get("last_request") if isinstance(data.get("last_request"), dict) else {}
+    recents = [r for r in (data.get("recent_requests") or []) if isinstance(r, dict)]
+    latest_done = recents[-1] if recents else last
+
+    decode = (
+        _positive(cur.get("decode_tok_s"))
+        or _positive(rates.get("active_decode_tok_s"))
+        or _positive(rates.get("average_decode_tok_s"))
+        or _positive(latest_done.get("decode_tok_s"))
+        or _positive(rates.get("generated_tokens_per_s"))
+    )
+    prefill = (
+        _positive(rates.get("prefill_tok_s_physical"))
+        or _positive(rates.get("prefill_tok_s"))
+        or _positive(rates.get("prefill_tokens_physical_per_s"))
+        or _prefill_from_request(cur)
+        or _prefill_from_request(latest_done)
+    )
+    rss = _positive(data.get("rss_gb")) or _positive(memory.get("rss_gb"))
+
+    accs = [_rate_unit(r.get("acceptance_rate")) for r in recents]
+    accs = [a for a in accs if a is not None]
+    acceptance = (
+        _rate_unit(cur.get("acceptance_rate"))
+        or _rate_unit(latest_done.get("acceptance_rate"))
+        or _mean(accs)
+    )
+
+    ttfts = [_num(r.get("ttft_s") if r.get("ttft_s") is not None else r.get("ttft")) for r in recents]
+    ttfts = [t for t in ttfts if t is not None and t >= 0]
+    ttft = (
+        _num(cur.get("ttft_s") if cur.get("ttft_s") is not None else cur.get("ttft"))
+        or _num(latest_done.get("ttft_s") if latest_done.get("ttft_s") is not None else latest_done.get("ttft"))
+        or _mean(ttfts)
+    )
+
+    completed = _num(totals.get("requests"))
+    if completed is None:
+        completed = float(len(recents))
+
+    state = str(cur.get("state") or "")
+    active = state in {"prefill", "decode", "running"} or (
+        bool(cur) and _num(cur.get("request_id")) is not None
+    )
+
+    raw: dict[str, Any] = {}
+    cache = cur.get("cache_status") or data.get("cache_status")
+    if cache:
+        raw["cache_status"] = cache
+    for key in (
+        "tokens_per_cycle",
+        "cycles",
+        "verify_mode",
+        "verify_block_tokens",
+        "draft_block_tokens",
+        "adaptive_block",
+    ):
+        value = cur.get(key)
+        if value is None:
+            value = latest_done.get(key)
+        if value is None:
+            value = data.get(key)
+        if value is not None:
+            raw[key] = value
+
+    out: dict[str, Any] = {
+        "decode_tok_s": decode,
+        "prefill_tok_s": prefill,
+        "rss_gb": rss,
+        "active_request": active,
+        "requests_completed": int(completed),
+        "raw": raw,
+    }
+    if acceptance is not None:
+        out["acceptance_rate"] = acceptance
+    if ttft is not None:
+        out["ttft_s"] = ttft
+    return out
+
+
 def _memory_pressure_level() -> int | None:
     """macOS kernel memory pressure: 1=normal 2=warning 4=critical."""
     try:
@@ -93,27 +226,7 @@ class MetricsSampler:
         }
         m = await runtime_manager.provider.metrics()
         if m.get("available"):
-            data = m["data"]
-            rates = data.get("rates") or {}
-            cur = data.get("current_request") or {}
-            sample["runtime"] = {
-                "decode_tok_s": rates.get("average_decode_tok_s"),
-                "prefill_tok_s": rates.get("prefill_tok_s_physical") or rates.get("prefill_tok_s"),
-                "rss_gb": data.get("rss_gb"),
-                "active_request": bool(cur),
-                "requests_completed": len(data.get("recent_requests") or []),
-                "raw": {k: data.get(k) for k in ("cache_status",) if k in data},
-            }
-            recents = data.get("recent_requests") or []
-            accs = [r.get("acceptance_rate") for r in recents
-                    if isinstance(r.get("acceptance_rate"), (int, float))]
-            if accs:
-                avg = sum(accs) / len(accs)
-                sample["runtime"]["acceptance_rate"] = avg if avg <= 1 else avg / 100
-            ttfts = [r.get("ttft_s") or r.get("ttft") for r in recents]
-            ttfts = [t for t in ttfts if isinstance(t, (int, float))]
-            if ttfts:
-                sample["runtime"]["ttft_s"] = sum(ttfts) / len(ttfts)
+            sample["runtime"] = runtime_fields_from_dflash(m.get("data") or {})
         return sample
 
     def _check_memory_safety(self, sample: dict[str, Any]) -> None:

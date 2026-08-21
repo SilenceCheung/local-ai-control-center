@@ -2,6 +2,8 @@
 
 审计时间：2026-08-20 10:25 (UTC+8) · 审计人：Agent（只读审计，未修改任何现有配置）
 
+> 2026-08-21 更新：项目 venv 已从 PyPI 0.1.8 升级到固定上游 commit `60803233af4589e18588b9bacbb03880801c828a`（包版本显示 0.1.10）。PyPI 当前没有 0.1.10 可安装包；以 `scripts/install.sh` 与 `docs/HANDOVER-CODEX.md` 为当前事实。官方 Qwen3.8 Target/DFlash2 正在下载，真机数据尚未写入本审计。
+
 ## 1. 硬件与系统
 
 | 项 | 值 |
@@ -32,7 +34,7 @@
 |---|---|
 | mlx（系统 Python 3.14） | 0.31.2 已装（不复用，项目 venv 独立安装） |
 | mlx-lm / mlx-vlm | 系统未装 → venv 内安装 |
-| **dflash-mlx** | 未装 → venv 内安装 `dflash-mlx`（PyPI 0.1.10，Apache-2.0） |
+| **dflash-mlx** | venv 已安装固定 Git commit `60803233`（包版本 0.1.10，Apache-2.0）；不是 PyPI 0.1.10 |
 | LM Studio | 运行中，监听 `127.0.0.1:1234`；CLI `lms` 在 `~/.lmstudio/bin` — **不修改** |
 | Ollama | 0.24.0 运行中，监听 `127.0.0.1:11434` — **不修改** |
 
@@ -66,7 +68,7 @@
 
 ## 6. Runtime 选型结论
 
-**采用 `dflash-mlx`（PyPI）作为 FAST MODE 推理引擎**，理由：
+**采用 `dflash-mlx`（固定 Git commit）作为 FAST MODE 推理引擎**，理由：
 
 1. mlx-lm 核心尚未合入 DFlash；dflash-mlx 是当前最成熟实现（767 stars）
 2. 自带 `dflash serve`：OpenAI 兼容 `/v1/chat/completions`（SSE 流式 + `delta.tool_calls` 工具调用）、最小 `/v1/responses` 适配、`/metrics` 实时指标（接受率、tokens_per_cycle、prefill/decode tok/s、rss）

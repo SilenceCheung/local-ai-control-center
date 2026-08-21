@@ -19,9 +19,13 @@ from backend.core.config import GATEWAY_STATS_PATH, load_config
 RECENT_S = 30 * 60
 
 
-def _base_url() -> str:
+def _origin() -> str:
     cfg = load_config()
-    return f"http://{cfg['api']['host']}:{cfg['api']['port']}/v1"
+    return f"http://{cfg['api']['host']}:{cfg['api']['port']}"
+
+
+def _base_url() -> str:
+    return _origin() + "/v1"
 
 
 def _alias() -> str:
@@ -68,10 +72,14 @@ def agent_catalog() -> list[dict[str, Any]]:
             "name": "Codex CLI",
             "status": status_of("codex"),
             "protocol": "openai",
-            "instructions": "Add a model provider to ~/.codex/config.toml (do not remove existing entries):",
+            "instructions": (
+                "Add a model provider to ~/.codex/config.toml. Codex talks OpenAI Responses; "
+                "the local gateway translates it to Chat Completions."
+            ),
             "config_snippet": (
                 f'[model_providers.local]\nname = "Local AI"\nbase_url = "{base}"\n'
-                f'env_key = "LOCAL_AI_KEY"   # export LOCAL_AI_KEY={key}\n\n'
+                f'env_key = "LOCAL_AI_KEY"   # export LOCAL_AI_KEY={key}\n'
+                'wire_api = "responses"\n\n'
                 f'[profiles.local]\nmodel_provider = "local"\nmodel = "{alias}"'
             ),
             "config": {"base_url": base, "api_key": key, "model": alias},
@@ -117,18 +125,42 @@ def agent_catalog() -> list[dict[str, Any]]:
             "config": {"base_url": base, "api_key": key, "model": alias},
         },
         {
+            "id": "grok",
+            "name": "Grok Build",
+            "status": status_of("grok"),
+            "protocol": "openai",
+            "instructions": (
+                "Add a custom model to ~/.grok/config.toml. Grok Build launches a small "
+                "auxiliary stream beside the full agent turn; the gateway classifies and "
+                "schedules those requests so the production turn gets the single MLX slot."
+            ),
+            "config_snippet": (
+                f'[model.local-qwen]\nmodel = "{alias}"\nbase_url = "{base}"\n'
+                f'name = "Local Qwen3.8 27B DFlash2"\nenv_key = "LOCAL_AI_KEY"\n'
+                'api_backend = "chat_completions"\ntemperature = 0.0\n'
+                'max_completion_tokens = 4096\ncontext_window = 65536\n'
+                'stream_tool_calls = true'
+            ),
+            "config": {"base_url": base, "api_key": key, "model": alias},
+        },
+        {
             "id": "claude-code",
             "name": "Claude Code",
             "status": status_of("claude-code"),
             "protocol": "anthropic",
             "instructions": (
-                "Claude Code speaks the Anthropic API, not the OpenAI API. A compatibility "
-                "gateway (e.g. LiteLLM `litellm --model openai/" + alias + "`) can bridge it "
-                "to this server, but it is NOT bundled in this first version. Status here "
-                "will stay 'not supported natively' until a gateway is configured."
+                "Claude Code uses Anthropic /v1/messages. Point ANTHROPIC_BASE_URL at the "
+                "origin with no trailing slash and no /v1 suffix (CodeG/Claude CLI append "
+                "/v1/messages?beta=true). The gateway translates to Chat Completions, queues "
+                "one completion at a time, and folds extra system turns to the front so Qwen "
+                "will accept Claude Code's prompt layout."
             ),
-            "not_supported_natively": True,
-            "config": {"base_url": base, "api_key": key, "model": alias},
+            "config_snippet": (
+                f"export ANTHROPIC_BASE_URL={_origin()}\n"
+                f"export ANTHROPIC_API_KEY={key}\n"
+                f"export ANTHROPIC_MODEL={alias}"
+            ),
+            "config": {"base_url": _origin(), "api_key": key, "model": alias},
         },
     ]
 

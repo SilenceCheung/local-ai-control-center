@@ -1,8 +1,38 @@
 # Local AI Control Center
 
-Apple Silicon 本地大模型 Runtime + Agent Gateway + Speculative Decoding 管理后台。
+在 Apple Silicon 上，把 **Qwen3.8-27B + DFlash2** 变成可观测、可回退、可长期接入 Agent 的本地推理服务。
 
-打开菜单栏 **Local AI.app**（或浏览器 <http://127.0.0.1:8787>）→ 点击 Start → Agent 直接使用本地模型。不需要终端、不需要记命令、不需要手动加载 Draft。
+打开菜单栏 **Local AI.app**（或浏览器 <http://127.0.0.1:8787>）→ 点击 Start → Claude Code、OpenCode、Codex、Grok Build 等 Agent 直接使用本地模型。不需要记启动命令，也不需要手动加载 Draft。
+
+- **Native macOS control plane**：原生菜单栏 App + Console，管理模型、配方、缓存、基准与日志。
+- **Agent-ready gateway**：同时兼容 Chat Completions、Responses 和 Anthropic Messages / Tool Use。
+- **Fast / Safe 双模式**：DFlash2 加速不可用时可回退 Target-only，Agent 端点和模型别名不变。
+- **生产力保护**：有界队列、429 背压、请求关联、缓存命中、TTFT、接受率和回退原因均可观测。
+
+## 实机预览
+
+![Local AI Control Center 在 M5 Max 上运行 Qwen3.8-27B 与 DFlash2](docs/images/m5-max-overview.png)
+
+*M5 Max 128GB 实机快照：Qwen3.8-27B MLX 4-bit + z-lab DFlash2，统一展示 Runtime、投机解码、API 和 Agent 连接状态。*
+
+![DFlash2 配方、接受率与生成速度实机界面](docs/images/m5-max-dflash2.png)
+
+*DFlash2 页面会同时显示正在运行的配方、Draft checkpoint、接受率、生成速度和回退次数，避免“界面已选择、后端未激活”的假快状态。*
+
+## Qwen3.8 + DFlash2 能带来什么
+
+DFlash2 不是替换 Qwen3.8 的另一个聊天模型。Draft 会并行提出一块候选 token，Target 负责验证；接受率足够高时，一次 Target 周期可以确认多个 token，从而提高解码吞吐，同时仍由 Target 决定最终输出。
+
+在这台 **M5 Max 128GB** 上，官方 4-bit 配方曾观察到约 **53–96 tok/s** 的 DFlash 解码区间；下面这组 UI 快照记录为 **87.2 tok/s、78.1% 接受率、0.40 s TTFT**。因此“接近 100 tok/s”是高接受率、热缓存请求中可以观察到的上沿，不是所有提示词、上下文和 Agent 回合的保底速度。
+
+| 实机信号 | 观察结果 | 对实际 Agent 工作的意义 |
+|---|---:|---|
+| DFlash UI 快照 | 87.2 tok/s · 78.1% 接受率 | 说明官方 Qwen3.8 + DFlash2 配方确实参与解码，而不是只加载 Target |
+| Grok Build 代码任务 | 52.9–66.5 tok/s · 约 69–80% 接受率 | 真实多轮工具调用通常低于短提示峰值，但可持续完成读、改、测闭环 |
+| 18,053-token 首次前缀 | 32.36 s prefill | 从未出现过的 20K 级前缀仍然昂贵，DFlash 不会消除冷 prefill |
+| 相同前缀热请求 | 0.198–0.205 s prefill | 恢复约 18K token 后，稳定 system prompt / tool schema 的收益非常明显 |
+
+这些数字是 2026-08-21 P0–P2 加固前的真实能力快照，用于说明性能边界，**不是发布 SLO**。当前 Target 重新下载完成后，应按 [`docs/P0-P2-PRODUCTION-READINESS.md`](docs/P0-P2-PRODUCTION-READINESS.md) 重新跑冷/热前缀、工具循环、取消、并发和两小时 soak；完整历史证据见 [`docs/PRODUCTION-AGENT-VALIDATION.md`](docs/PRODUCTION-AGENT-VALIDATION.md)。
 
 ## Architecture
 
@@ -25,12 +55,13 @@ Agents ───────► Inference Gateway · FastAPI · 127.0.0.1:8080/v
 
 三个进程完全隔离：**管理后台崩溃不影响模型 API；模型重启不影响后台；模式切换对 Agent 透明**（公共端口与模型别名永不变化）。
 
-## 当前模型
+## 推荐模型配方
 
 | 角色 | 模型 | 说明 |
 |---|---|---|
-| Target | `McG-221/Qwen3.8-27B-heretic-ara-mlx-8Bit` | 28.6 GB · MLX 8-bit · 256K ctx |
-| Draft | `jfan/Qwen3.8-27B-heretic-dflash` | 3.5 GB · block size 16（训练期固定）|
+| Target | `lmstudio-community/Qwen3.8-27B-MLX-4bit` | 官方 Qwen3.8-27B · MLX 4-bit · 默认 128K ctx |
+| Draft | `z-lab/Qwen3.8-27B-DFlash2` | 官方配套 DFlash2 · `w4:gs64` · checkpoint block size 8 |
+| 可选配方 | `McG-221/...8Bit` + `jfan/...heretic-dflash` | Heretic 8-bit Target + DFlash 1 Draft，适合独立 A/B，不代表官方配方性能 |
 
 模型从 **LM Studio 库目录**（默认 `~/.lmstudio/models/{org}/{name}`）原地引用，不移动、不改名。额外扫描 `~/.cache/huggingface/hub`，但**新下载不会写到 HF 缓存**。换库目录必须在 Models / Settings 里手动选取。Models 页「发现」可搜 Hugging Face，仅 MLX 可下载；「下载」页是队列（同时只跑一个，可暂停续传）。从下载列表移除只删任务记录；清理残片只删 `.part`；整目录删除只在「已安装」页并需二次确认。架构不锁定这两个模型：已安装列表可将任何 MLX 兼容模型设为 Target。
 
@@ -59,7 +90,7 @@ bash scripts/install.sh          # venv + 依赖 + 前端构建 + CLI + 可选 l
 | 打开 App | — | — | `local-ai app` |
 
 - Web UI：**http://127.0.0.1:8787**
-- 模型 API：**http://127.0.0.1:8080/v1** · API Key `local` · Model 默认 **`Qwen3.8-27B-Heretic-8bit`**（随主模型自动命名，可手动锁定）
+- 模型 API：**http://127.0.0.1:8080/v1** · API Key `local` · Model 默认 **`Qwen3.8-27B-4bit`**（随主模型自动命名，可手动锁定）
 
 ## macOS 应用（菜单栏）
 
@@ -108,9 +139,9 @@ open "dist/Local AI.app"           # 或 local-ai app
 
 ## DFlash（Fast Mode）
 
-- Settings 里 **Fast 配方**可切换：**Heretic（默认）** 或 **官方 DFlash 2**。切换会换 Target + Draft + 旋钮；公开模型名默认跟着 Target 走，手动改过则锁定。
+- Settings 里 **Fast 配方**可切换：**官方 DFlash 2（推荐配置）** 或 **Heretic**。切换会同时更换 Target、Draft 与对应旋钮；公开模型名默认跟着 Target 走，手动改过则锁定。
 - Heretic：`McG-221/Qwen3.8-27B-heretic-ara-mlx-8Bit` + `jfan/Qwen3.8-27B-heretic-dflash`（DFlash 1，训练块 16）。
-- 官方 DFlash 2：`mlx-community/Qwen3.8-27B-4bit` + `z-lab/Qwen3.8-27B-DFlash2`。模型不在磁盘时页面会标明 missing，不会假装已加载。
+- 官方 DFlash 2：`lmstudio-community/Qwen3.8-27B-MLX-4bit` + `z-lab/Qwen3.8-27B-DFlash2`。模型不在磁盘时页面会标明 missing，不会假装已加载。
 - Fast 引擎是社区 **dflash-mlx** 的 `dflash serve`，安装器固定到含 Qwen3.8 DFlash2 的上游 commit `60803233`（包版本 0.1.10）；**不是** `pip install dflash`（那个包会盖掉 serve）。
 - DFlash 页实时显示接受率、每周期 token 数、生成速度、Fallback 次数。
 - Heretic Draft 的 block size = 16 由训练决定。官方 DFlash2 checkpoint 的训练块为 8，但当前引擎能力上限为 5；服务会自动选择实际校验宽度，CLI 不提供 `--block-size`。Auto Tune 比较 adaptive/full-5、fixed/full-5 与 fixed/cap-4。
@@ -118,14 +149,7 @@ open "dist/Local AI.app"           # 或 local-ai app
 - 可调校验：`verify-mode`（adaptive/dflash）与 `verify-len-cap` — 用 **Benchmark → Auto Tune** 实测选优。
 - Fast 崩溃时看门狗**自动回退 Safe**，请求不中断；接受率持续 <25% 会提示建议 Safe（不强切）。
 
-实测（M5 Max 128GB，本仓库 benchmark 页可复现）：
-
-| 场景 | Safe | Fast | 加速 | 接受率 |
-|---|---|---|---|---|
-| CLI 冒烟（fibonacci 256 tok） | 18.5 tok/s | 27.5 tok/s | **1.49×** | 68.2% |
-| SwiftUI 长代码（1024 tok） | 16.9 tok/s | 18.1 tok/s | 1.07× | 48.6% |
-
-> 该 draft 权重仅训练至 10k/60k 步，不同任务域接受率差异大；作者放出完整权重后收益会更高。所有数字均为真实测量，无硬编码。
+判断是否“真的加速”不能只看一个 tok/s：运行态必须显示 `mode_used=dflash`、正确的 Target / Draft / quant 参数，并同时观察接受率、TTFT、physical/restored prefill 和回退次数。Benchmark → DFlash A/B 会在同一 prompt 下依次测 Safe 与 Fast，避免把不同上下文、不同缓存状态的数字硬拼成加速比。
 
 ## Agent 接入
 
@@ -134,7 +158,7 @@ Agents 页为每个工具生成配置并可一键 Test Connection。核心三项
 ```
 Base URL : http://127.0.0.1:8080/v1
 API Key  : local
-Model    : Qwen3.8-27B-Heretic-8bit   # 总览 / API 页可改；旧名 qwen3.8-27b-local 仍能调通
+Model    : Qwen3.8-27B-4bit   # 总览 / API 页可改；旧名 qwen3.8-27b-local 仍能调通
 ```
 
 - **Grok.app**：自定义 OpenAI，Base URL 带 `/v1`。Responses 与 Chat Completions 都由网关翻译，不必再为协议 400 切接口。
@@ -142,7 +166,7 @@ Model    : Qwen3.8-27B-Heretic-8bit   # 总览 / API 页可改；旧名 qwen3.8-
 - **Cursor**：Settings → Models → Override OpenAI Base URL（部分云端功能不适用本地端点）。
 - **Codex CLI**：`~/.codex/config.toml` 加 `model_providers.local`。Codex 默认 Responses，网关会译成 Chat Completions。
 - **Cline / Roo Code**：选 "OpenAI Compatible" Provider 填三项即可。
-- **Claude Code / CodeG**：`ANTHROPIC_BASE_URL=http://127.0.0.1:8080`（不要加 `/v1`，也不要末尾 `/`），`ANTHROPIC_API_KEY=local`（或 `ANTHROPIC_AUTH_TOKEN=local`）。网关提供 `/v1/messages`，并兼容 CLI 把 `?beta=true` 写进路径、以及 `/v1/messages/count_tokens`。模型选当前 alias（如 `Qwen3.8-27B-Heretic-8bit`）或 `sonnet`。CodeG 会并行打两路流式请求，且会在 user 消息后再跟一段 system；网关会排队并合并 system，否则 dflash 会 404（Claude 显示成 503 重试）。
+- **Claude Code / CodeG**：`ANTHROPIC_BASE_URL=http://127.0.0.1:8080`（不要加 `/v1`，也不要末尾 `/`），`ANTHROPIC_API_KEY=local`（或 `ANTHROPIC_AUTH_TOKEN=local`）。网关提供 `/v1/messages`，并兼容 CLI 把 `?beta=true` 写进路径、以及 `/v1/messages/count_tokens`。模型选当前 alias（如 `Qwen3.8-27B-4bit`）或 `sonnet`。CodeG 会并行打两路流式请求，且会在 user 消息后再跟一段 system；网关会排队并合并 system，否则 dflash 会 404（Claude 显示成 503 重试）。
 
 Tool Calling 已真实验证：模型输出标准 `tool_calls` + 合法 JSON 参数 + `finish_reason: "tool_calls"`（Benchmark → Tool Calling Probe 可随时复测）。
 
@@ -184,13 +208,13 @@ Logs 页分 Runtime / API / Backend / Benchmark 四类，默认「重要优先�
 ## 安全与隐私
 
 - 全部端口仅监听 `127.0.0.1`，无 LAN/公网暴露选项（本版有意不提供）。
-- 无 Telemetry、无 Analytics、无外部请求。
+- 无 Telemetry、无 Analytics。只有用户主动搜索或下载模型时才访问 Hugging Face；推理请求不会发送到外部服务。
 - SQLite 只存事件与基准结果，**默认不存 prompt 内容**（Settings → Privacy 可显式开启）。
 
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest -q            # 20 项：单元(离线) + 集成(需服务运行)
+.venv/bin/python -m pytest -q            # 离线单元测试 + 需本地服务的集成测试
 cd frontend && npx vitest run            # 前端
 ```
 
